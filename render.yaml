@@ -1,0 +1,22 @@
+# Configuração do Render (Blueprint). Veja deploy/RENDER.md.
+services:
+  - type: web
+    name: gestao-barbosadev
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Assina os logins; o Render gera um valor aleatório.
+      - key: SESSION_SECRET
+        generateValue: true
+      # Repositório PRIVADO onde fica o db.json, ex.: seuusuario/barbosadev-dados
+      - key: GITHUB_REPO
+        sync: false
+      # Token do GitHub com permissão "Contents: Read and write" só nesse repositório
+      - key: GITHUB_TOKEN
+        sync: false
