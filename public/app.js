@@ -233,7 +233,7 @@ function ceoView() {
     </div>`;
 }
 
-const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já cadastrado'], sem_nome: ['', 'Sem nome'] };
+const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já enviado antes'], sem_nome: ['', 'Sem nome'] };
 
 function importCard() {
   const p = state.importPreview;
@@ -280,6 +280,7 @@ function importCard() {
     ${imports.length ? `<h3 class="mini">Últimos envios</h3><div class="list">${imports.slice(0, 5).map(i => `
       <div class="list-item"><span>${esc(i.file)} <span class="sub">· para ${esc(i.assignToName || userName(i.assignTo))} · ${fmtDateTime(i.at)}</span></span>
       <span><span class="badge green">+${i.added}</span> ${i.skipped ? `<span class="badge">${i.skipped} ignorados</span>` : ''}</span></div>`).join('')}</div>` : ''}
+    ${state.stats.hiddenDuplicates ? `<p class="sub">${state.stats.hiddenDuplicates} contato(s) repetido(s) de planilhas anteriores estão ocultos da lista da equipe.</p>` : ''}
   </section>`;
 }
 

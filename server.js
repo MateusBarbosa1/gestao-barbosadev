@@ -233,7 +233,7 @@ app.patch('/api/users/:id', auth('ceo'), (req, res) => {
 
 // ---------- Contatos ----------
 app.get('/api/contacts', auth(), (req, res) => {
-  let list = db.contacts.filter(c => canSee(req.user, c));
+  let list = visibleContacts().filter(c => canSee(req.user, c));
   if (req.query.vendor && req.user.role !== 'vendedor') list = list.filter(c => c.assignedTo === req.query.vendor);
   res.json(list);
 });
@@ -412,11 +412,12 @@ app.get('/api/stats', auth(), (req, res) => {
   const pct = db.settings.commission;
   const sellers = db.users.filter(u => u.role === 'vendedor' || u.role === 'gerente');
 
-  const team = statsFor(db.contacts, month);
+  const contacts = visibleContacts();
+  const team = statsFor(contacts, month);
   const managerCommission = team.managerCommission;
   // Gerente: comissão das próprias vendas + % da parte da Barbosa Dev nas vendas dos vendedores.
   const perUser = sellers.map(u => {
-    const mine = db.contacts.filter(c => c.assignedTo === u.id);
+    const mine = contacts.filter(c => c.assignedTo === u.id);
     const s = statsFor(mine, month);
     const commission = s.sellerCommission + (u.role === 'gerente' ? managerCommission : 0);
     return { user: publicUser(u), ...s, commission: round2(commission), goal: goalProgress(mine, u.role, month) };
@@ -444,6 +445,7 @@ app.get('/api/stats', auth(), (req, res) => {
       bdShare: team.bdShare,
     },
     imports: db.imports.slice(-10).reverse(),
+    hiddenDuplicates: db.contacts.length - contacts.length,
   });
 });
 
@@ -482,6 +484,58 @@ function phoneKey(phone) {
   return d.length > 11 && d.startsWith('55') ? d.slice(2) : d;
 }
 
+// Chaves que identificam o mesmo estabelecimento: telefone, ou nome + cidade / nome + endereço.
+function contactKeys(c) {
+  const keys = [];
+  const ph = phoneKey(c.phone);
+  if (ph.length >= 8) keys.push('tel:' + ph);
+  const name = norm(c.name).replace(/[^a-z0-9]/g, '');
+  if (name) {
+    const city = norm(c.city).replace(/[^a-z0-9]/g, '');
+    const address = norm(c.address).replace(/[^a-z0-9]/g, '');
+    if (city) keys.push('nc:' + name + '|' + city);
+    if (address) keys.push('na:' + name + '|' + address);
+  }
+  return keys;
+}
+
+const touched = c => c.messaged || c.sold || c.status !== 'novo';
+
+// Contatos repetidos (o mesmo estabelecimento enviado por outra planilha) que o funcionário não deve ver.
+// Em cada grupo de repetidos fica visível o que já foi trabalhado (ou o mais antigo);
+// os outros ficam ocultos enquanto ninguém mexeu neles.
+function hiddenDuplicateIds() {
+  const parent = new Map();
+  const find = id => { while (parent.get(id) !== id) id = parent.get(id); return id; };
+  const owner = new Map();
+  for (const c of db.contacts) {
+    parent.set(c.id, c.id);
+    for (const k of contactKeys(c)) {
+      if (owner.has(k)) parent.set(find(c.id), find(owner.get(k)));
+      else owner.set(k, c.id);
+    }
+  }
+  const groups = new Map();
+  for (const c of db.contacts) {
+    const root = find(c.id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(c);
+  }
+  const hidden = new Set();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const byAge = [...group].sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    const keeper = byAge.find(touched) || byAge[0];
+    for (const c of group) if (c !== keeper && !touched(c)) hidden.add(c.id);
+  }
+  return hidden;
+}
+
+function visibleContacts() {
+  const hidden = hiddenDuplicateIds();
+  return hidden.size ? db.contacts.filter(c => !hidden.has(c.id)) : db.contacts;
+}
+
 const mapsSearch = (...parts) => {
   const q = parts.filter(Boolean).join(', ');
   return q ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}` : '';
@@ -511,17 +565,18 @@ function parseSheet(buffer, filename = '') {
     throw new Error('Não encontrei a coluna "Nome" (ou "title") na planilha. Use o modelo para conferir os cabeçalhos.');
   }
 
-  const seenPhones = new Set(db.contacts.map(c => phoneKey(c.phone)).filter(Boolean));
+  // Já enviado antes (em qualquer planilha ou cadastro) ou repetido dentro da própria planilha.
+  const seen = new Set(db.contacts.flatMap(contactKeys));
   const items = rows.map(row => {
     const data = { name: '', niche: '', phone: '', site: '', maps: '', address: '', city: '' };
     for (const [h, f] of Object.entries(mapping)) data[f] = String(row[h] ?? '').trim();
     // O extrator do Google Maps não traz o link do local: monta uma busca pelo nome + endereço.
     if (!data.maps) data.maps = mapsSearch(data.name, data.address || data.city);
-    const ph = phoneKey(data.phone);
+    const keys = contactKeys(data);
     let status = 'novo';
     if (!data.name) status = 'sem_nome';
-    else if (ph && seenPhones.has(ph)) status = 'duplicado';
-    if (status === 'novo' && ph) seenPhones.add(ph);
+    else if (keys.some(k => seen.has(k))) status = 'duplicado';
+    if (status === 'novo') keys.forEach(k => seen.add(k));
     return { ...data, status };
   });
   return { mapping, items };
