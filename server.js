@@ -444,7 +444,10 @@ app.get('/api/stats', auth(), (req, res) => {
       total: round2(team.sellerCommission + team.managerCommission),
       bdShare: team.bdShare,
     },
-    imports: db.imports.slice(-10).reverse(),
+    imports: db.imports.slice().reverse().map(i => {
+      const mine = db.contacts.filter(c => c.importId === i.id);
+      return { ...i, remaining: mine.length, worked: mine.filter(touched).length, sold: mine.filter(c => c.sold).length };
+    }),
     hiddenDuplicates: db.contacts.length - contacts.length,
   });
 });
@@ -617,6 +620,20 @@ app.post('/api/import', auth('ceo'), upload.single('file'), (req, res) => {
   db.imports.push({ id: importId, file: req.file.originalname, added, skipped, by: req.user.name, at: new Date().toISOString(), assignTo: target, assignToName: targetName });
   save();
   res.json({ added, skipped, columns: mapping, assignToName: targetName });
+});
+
+// Apaga uma lista enviada: some da equipe junto com o andamento (respondidos, follow up, reuniões…).
+// Contatos vendidos ficam, para não perder o registro das vendas e comissões.
+app.delete('/api/imports/:id', auth('ceo'), (req, res) => {
+  const imp = db.imports.find(i => i.id === req.params.id);
+  if (!imp) return res.status(404).json({ error: 'Lista não encontrada.' });
+  const before = db.contacts.length;
+  db.contacts = db.contacts.filter(c => c.importId !== imp.id || c.sold);
+  const removed = before - db.contacts.length;
+  const keptSold = db.contacts.filter(c => c.importId === imp.id).length;
+  db.imports = db.imports.filter(i => i.id !== imp.id);
+  save();
+  res.json({ removed, keptSold });
 });
 
 app.get('/api/template.xlsx', (req, res) => {

@@ -277,9 +277,11 @@ function importCard() {
             <td><span class="badge ${IMPORT_STATUS[i.status][0]}">${IMPORT_STATUS[i.status][1]}</span></td></tr>`).join('')}</tbody>
         </table>
       </div>`}
-    ${imports.length ? `<h3 class="mini">Últimos envios</h3><div class="list">${imports.slice(0, 5).map(i => `
+    ${imports.length ? `<h3 class="mini">Listas enviadas</h3><div class="list">${imports.map(i => `
       <div class="list-item"><span>${esc(i.file)} <span class="sub">· para ${esc(i.assignToName || userName(i.assignTo))} · ${fmtDateTime(i.at)}</span></span>
-      <span><span class="badge green">+${i.added}</span> ${i.skipped ? `<span class="badge">${i.skipped} ignorados</span>` : ''}</span></div>`).join('')}</div>` : ''}
+      <span><span class="badge green">+${i.added}</span> ${i.skipped ? `<span class="badge">${i.skipped} ignorados</span>` : ''}
+        <span class="badge">${i.remaining} na lista · ${i.worked} trabalhados</span>
+        <button type="button" class="btn sm danger" data-del-import="${i.id}">Apagar lista</button></span></div>`).join('')}</div>` : ''}
     ${state.stats.hiddenDuplicates ? `<p class="sub">${state.stats.hiddenDuplicates} contato(s) repetido(s) de planilhas anteriores estão ocultos da lista da equipe.</p>` : ''}
   </section>`;
 }
@@ -533,6 +535,23 @@ function bindCeo() {
       fileInput.value = '';
     }
   };
+  document.querySelectorAll('[data-del-import]').forEach(btn => btn.onclick = async () => {
+    const imp = state.stats.imports.find(i => i.id === btn.dataset.delImport);
+    const toDelete = imp.remaining - imp.sold;
+    let msg = `Apagar a lista "${imp.file}"?\n\n${toDelete} contato(s) vão sumir do painel de ${imp.assignToName || userName(imp.assignTo)}`;
+    if (imp.worked) msg += `, inclusive os que já estão em respondidos, follow up, reunião etc.`;
+    if (imp.sold) msg += `\n\n${imp.sold} contato(s) vendido(s) serão mantidos para não perder as vendas e comissões.`;
+    if (!confirm(msg + '\n\nIsso não pode ser desfeito.')) return;
+    btn.disabled = true;
+    try {
+      const r = await api(`/imports/${imp.id}`, { method: 'DELETE' });
+      toast(`Lista apagada: ${r.removed} contato(s) removido(s)` + (r.keptSold ? `, ${r.keptSold} vendido(s) mantido(s)` : ''));
+      refresh();
+    } catch (err) {
+      toast(err.message);
+      btn.disabled = false;
+    }
+  });
   const cancel = $('#import-cancel');
   if (cancel) cancel.onclick = () => { state.importPreview = state.importFile = null; render(); };
   const form = $('#import-form');
