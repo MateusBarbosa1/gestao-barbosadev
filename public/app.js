@@ -233,7 +233,7 @@ function ceoView() {
     </div>`;
 }
 
-const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já enviado antes'], sem_nome: ['', 'Sem nome'] };
+const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já enviado antes'], indisponivel: ['', 'Número indisponível'],sem_nome: ['', 'Sem nome'] };
 
 function importCard() {
   const p = state.importPreview;
@@ -283,6 +283,7 @@ function importCard() {
         <span class="badge">${i.remaining} na lista · ${i.worked} trabalhados</span>
         <button type="button" class="btn sm danger" data-del-import="${i.id}">Apagar lista</button></span></div>`).join('')}</div>` : ''}
     ${state.stats.hiddenDuplicates ? `<p class="sub">${state.stats.hiddenDuplicates} contato(s) repetido(s) de planilhas anteriores estão ocultos da lista da equipe.</p>` : ''}
+    ${state.stats.unavailable ? `<p class="sub">${state.stats.unavailable} contato(s) marcado(s) pela equipe como número indisponível foram retirados da base.</p>` : ''}
   </section>`;
 }
 
@@ -440,7 +441,10 @@ function contactRow(c, isLead) {
     <td><select data-status>${state.statuses.map(s => `<option value="${s.id}" ${c.status === s.id ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
       ${c.status === 'reuniao' && c.meetingDate ? `<div class="sub">${fmtDateTime(c.meetingDate)}</div>` : ''}</td>
     <td>${c.sold ? `<span class="badge green">${brl(c.saleValue)}</span>` : `<button class="btn sm success" data-sale>Vendeu</button>`}</td>
-    <td><button class="btn sm ghost" data-edit="${c.id}">Detalhes</button></td>
+    <td><div class="links">
+      <button class="btn sm ghost" data-edit="${c.id}">Detalhes</button>
+      ${c.sold ? '' : `<button class="btn sm ghost danger" data-unavailable title="O número não existe ou não tem WhatsApp: tira o contato da lista">Nº indisponível</button>`}
+    </div></td>
   </tr>`;
 }
 
@@ -452,6 +456,16 @@ function bindContactTable() {
     const edit = e.target.closest('[data-edit]');
     if (edit) return openContactModal(state.contacts.find(c => c.id === edit.dataset.edit));
     if (e.target.closest('[data-sale]')) return openSaleModal(rowContact(e.target));
+    if (e.target.closest('[data-unavailable]')) {
+      const c = rowContact(e.target);
+      if (!confirm(`Marcar o número de "${c.name}" como indisponível?\n\nO contato sai da lista e não volta em planilhas futuras.`)) return;
+      try {
+        await api(`/contacts/${c.id}`, { method: 'PATCH', body: { unavailable: true } });
+        toast('Contato removido: número indisponível');
+        await refresh();
+      } catch (err) { toast(err.message); }
+      return;
+    }
     if (e.target.id === 'btn-new-contact') return openContactModal(null);
     if (e.target.id === 'btn-add-user') return openUserModal(null);
     const u = e.target.closest('[data-user]');

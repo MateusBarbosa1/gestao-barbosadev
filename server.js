@@ -291,6 +291,13 @@ app.patch('/api/contacts/:id', auth(), (req, res) => {
     c.status = b.status;
     if (b.status !== 'novo' && !c.messaged) { c.messaged = true; c.messagedAt = now; }
   }
+  // Número indisponível: o contato sai da lista de todos, mas continua guardado para barrar a reimportação.
+  if (b.unavailable === true) {
+    if (c.sold) return res.status(400).json({ error: 'Contato já vendido.' });
+    c.unavailable = true;
+    c.unavailableAt = now;
+    c.unavailableBy = req.user.id;
+  }
   if (b.meetingDate !== undefined) c.meetingDate = b.meetingDate || null;
   if (b.notes !== undefined) c.notes = String(b.notes);
   for (const f of ['name', 'niche', 'phone', 'site', 'maps', 'address', 'city']) if (b[f] !== undefined) c[f] = String(b[f]).trim();
@@ -420,7 +427,9 @@ app.get('/api/stats', auth(), (req, res) => {
     const mine = contacts.filter(c => c.assignedTo === u.id);
     const s = statsFor(mine, month);
     const commission = s.sellerCommission + (u.role === 'gerente' ? managerCommission : 0);
-    return { user: publicUser(u), ...s, commission: round2(commission), goal: goalProgress(mine, u.role, month) };
+    // Mensagens para números que depois se mostraram indisponíveis continuam contando na meta.
+    const goal = goalProgress(db.contacts.filter(c => c.assignedTo === u.id), u.role, month);
+    return { user: publicUser(u), ...s, commission: round2(commission), goal };
   });
 
   const meetings = db.contacts
@@ -448,7 +457,8 @@ app.get('/api/stats', auth(), (req, res) => {
       const mine = db.contacts.filter(c => c.importId === i.id);
       return { ...i, remaining: mine.length, worked: mine.filter(touched).length, sold: mine.filter(c => c.sold).length };
     }),
-    hiddenDuplicates: db.contacts.length - contacts.length,
+    hiddenDuplicates: db.contacts.filter(c => !c.unavailable).length - contacts.length,
+    unavailable: db.contacts.filter(c => c.unavailable).length,
   });
 });
 
@@ -536,7 +546,7 @@ function hiddenDuplicateIds() {
 
 function visibleContacts() {
   const hidden = hiddenDuplicateIds();
-  return hidden.size ? db.contacts.filter(c => !hidden.has(c.id)) : db.contacts;
+  return db.contacts.filter(c => !hidden.has(c.id) && !c.unavailable);
 }
 
 const mapsSearch = (...parts) => {
@@ -570,6 +580,7 @@ function parseSheet(buffer, filename = '') {
 
   // Já enviado antes (em qualquer planilha ou cadastro) ou repetido dentro da própria planilha.
   const seen = new Set(db.contacts.flatMap(contactKeys));
+  const unavailablePhones = new Set(db.contacts.filter(c => c.unavailable).map(c => phoneKey(c.phone)).filter(Boolean));
   const items = rows.map(row => {
     const data = { name: '', niche: '', phone: '', site: '', maps: '', address: '', city: '' };
     for (const [h, f] of Object.entries(mapping)) data[f] = String(row[h] ?? '').trim();
@@ -578,6 +589,7 @@ function parseSheet(buffer, filename = '') {
     const keys = contactKeys(data);
     let status = 'novo';
     if (!data.name) status = 'sem_nome';
+    else if (unavailablePhones.has(phoneKey(data.phone))) status = 'indisponivel';
     else if (keys.some(k => seen.has(k))) status = 'duplicado';
     if (status === 'novo') keys.forEach(k => seen.add(k));
     return { ...data, status };
