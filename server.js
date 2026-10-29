@@ -457,7 +457,8 @@ app.get('/api/stats', auth(), (req, res) => {
       const mine = db.contacts.filter(c => c.importId === i.id);
       return { ...i, remaining: mine.length, worked: mine.filter(touched).length, sold: mine.filter(c => c.sold).length };
     }),
-    hiddenDuplicates: db.contacts.filter(c => !c.unavailable).length - contacts.length,
+    hiddenDuplicates: db.contacts.filter(c => !c.unavailable && !badPhone(c)).length - contacts.length,
+    badPhones: db.contacts.filter(c => !c.unavailable && badPhone(c)).length,
     unavailable: db.contacts.filter(c => c.unavailable).length,
   });
 });
@@ -496,6 +497,26 @@ function phoneKey(phone) {
   const d = String(phone || '').replace(/\D/g, '');
   return d.length > 11 && d.startsWith('55') ? d.slice(2) : d;
 }
+
+const DDDS = new Set(('11 12 13 14 15 16 17 18 19 21 22 24 27 28 31 32 33 34 35 37 38 41 42 43 44 45 46 47 48 49 ' +
+  '51 53 54 55 61 62 63 64 65 66 67 68 69 71 73 74 75 77 79 81 82 83 84 85 86 87 88 89 91 92 93 94 95 96 97 98 99').split(' '));
+
+// Tipo do número pelo formato brasileiro: celular (DDD + 9 dígitos começando com 9) pode ter WhatsApp;
+// fixo (DDD + 8 dígitos começando com 2 a 5) quase nunca tem; o resto é inválido (sem DDD, 0800, curto…).
+function phoneType(phone) {
+  let d = phoneKey(phone);
+  if (!d) return 'vazio';
+  if (d.length > 10 && d.startsWith('0')) d = d.slice(1);
+  if (!DDDS.has(d.slice(0, 2))) return 'invalido';
+  const local = d.slice(2);
+  if (local.length === 9 && local[0] === '9') return 'celular';
+  if (local.length === 8 && '6789'.includes(local[0])) return 'celular'; // celular antigo, sem o 9 na frente
+  if (local.length === 8 && '2345'.includes(local[0])) return 'fixo';
+  return 'invalido';
+}
+
+// Contato que nunca foi trabalhado e cujo número não pode receber WhatsApp: não vai para a equipe.
+const badPhone = c => !touched(c) && ['fixo', 'invalido'].includes(phoneType(c.phone));
 
 // Chaves que identificam o mesmo estabelecimento: telefone, ou nome + cidade / nome + endereço.
 function contactKeys(c) {
@@ -546,7 +567,7 @@ function hiddenDuplicateIds() {
 
 function visibleContacts() {
   const hidden = hiddenDuplicateIds();
-  return db.contacts.filter(c => !hidden.has(c.id) && !c.unavailable);
+  return db.contacts.filter(c => !hidden.has(c.id) && !c.unavailable && !badPhone(c));
 }
 
 const mapsSearch = (...parts) => {
@@ -588,7 +609,9 @@ function parseSheet(buffer, filename = '') {
     if (!data.maps) data.maps = mapsSearch(data.name, data.address || data.city);
     const keys = contactKeys(data);
     let status = 'novo';
+    const type = phoneType(data.phone);
     if (!data.name) status = 'sem_nome';
+    else if (type === 'fixo' || type === 'invalido') status = type;
     else if (unavailablePhones.has(phoneKey(data.phone))) status = 'indisponivel';
     else if (keys.some(k => seen.has(k))) status = 'duplicado';
     if (status === 'novo') keys.forEach(k => seen.add(k));

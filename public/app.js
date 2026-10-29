@@ -233,7 +233,7 @@ function ceoView() {
     </div>`;
 }
 
-const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já enviado antes'], indisponivel: ['', 'Número indisponível'],sem_nome: ['', 'Sem nome'] };
+const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já enviado antes'], indisponivel: ['', 'Número indisponível'], fixo: ['', 'Telefone fixo (sem WhatsApp)'], invalido: ['', 'Número inválido'], sem_nome: ['', 'Sem nome'] };
 
 function importCard() {
   const p = state.importPreview;
@@ -283,7 +283,8 @@ function importCard() {
         <span class="badge">${i.remaining} na lista · ${i.worked} trabalhados</span>
         <button type="button" class="btn sm danger" data-del-import="${i.id}">Apagar lista</button></span></div>`).join('')}</div>` : ''}
     ${state.stats.hiddenDuplicates ? `<p class="sub">${state.stats.hiddenDuplicates} contato(s) repetido(s) de planilhas anteriores estão ocultos da lista da equipe.</p>` : ''}
-    ${state.stats.unavailable ? `<p class="sub">${state.stats.unavailable} contato(s) marcado(s) pela equipe como número indisponível foram retirados da base.</p>` : ''}
+    ${state.stats.badPhones ? `<p class="sub">${state.stats.badPhones} contato(s) com telefone fixo ou número inválido estão ocultos da lista da equipe.</p>` : ''}
+    ${state.stats.unavailable ?`<p class="sub">${state.stats.unavailable} contato(s) marcado(s) pela equipe como número indisponível foram retirados da base.</p>` : ''}
   </section>`;
 }
 
