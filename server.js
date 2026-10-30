@@ -427,6 +427,7 @@ app.get('/api/stats', auth(), (req, res) => {
   const sellers = db.users.filter(u => u.role === 'vendedor' || u.role === 'gerente');
 
   const contacts = visibleContacts();
+  const visible = new Set(contacts.map(c => c.id));
   const team = statsFor(contacts, month);
   const managerCommission = team.managerCommission;
   // Gerente: comissão das próprias vendas + % da parte da Barbosa Dev nas vendas dos vendedores.
@@ -462,7 +463,13 @@ app.get('/api/stats', auth(), (req, res) => {
     },
     imports: db.imports.slice().reverse().map(i => {
       const mine = db.contacts.filter(c => c.importId === i.id);
-      return { ...i, remaining: mine.length, worked: mine.filter(touched).length, sold: mine.filter(c => c.sold).length };
+      const unavailable = mine.filter(c => c.unavailable).length;
+      // Fixos/inválidos: barrados no envio + os que já estavam na lista e foram ocultados pela validação.
+      const invalid = (i.skippedInvalid || 0) + mine.filter(c => !c.unavailable && badPhone(c)).length;
+      return {
+        ...i, remaining: mine.length, visible: mine.filter(c => visible.has(c.id)).length,
+        worked: mine.filter(touched).length, sold: mine.filter(c => c.sold).length, invalid, unavailable,
+      };
     }),
     hiddenDuplicates: db.contacts.filter(c => !c.unavailable && !badPhone(c)).length - contacts.length,
     badPhones: db.contacts.filter(c => !c.unavailable && badPhone(c)).length,
@@ -659,7 +666,8 @@ app.post('/api/import', auth('ceo'), upload.single('file'), (req, res) => {
   for (const item of items.filter(i => i.status === 'novo')) {
     db.contacts.push(newContact({ ...item, assignedTo: pick() }, req.user.id, importId));
   }
-  db.imports.push({ id: importId, file: req.file.originalname, added, skipped, by: req.user.name, at: new Date().toISOString(), assignTo: target, assignToName: targetName });
+  const skippedInvalid = items.filter(i => i.status === 'fixo' || i.status === 'invalido').length;
+  db.imports.push({ id: importId, file: req.file.originalname, added, skipped, skippedInvalid,by: req.user.name, at: new Date().toISOString(), assignTo: target, assignToName: targetName });
   save();
   res.json({ added, skipped, columns: mapping, assignToName: targetName });
 });

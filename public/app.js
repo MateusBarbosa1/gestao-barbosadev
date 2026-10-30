@@ -280,7 +280,9 @@ function importCard() {
     ${imports.length ? `<h3 class="mini">Listas enviadas</h3><div class="list">${imports.map(i => `
       <div class="list-item"><span>${esc(i.file)} <span class="sub">· para ${esc(i.assignToName || userName(i.assignTo))} · ${fmtDateTime(i.at)}</span></span>
       <span><span class="badge green">+${i.added}</span> ${i.skipped ? `<span class="badge">${i.skipped} ignorados</span>` : ''}
-        <span class="badge">${i.remaining} na lista · ${i.worked} trabalhados</span>
+        <span class="badge">${i.visible} na lista · ${i.worked} trabalhados</span>
+        ${i.invalid ? `<span class="badge yellow" title="Telefone fixo ou número inválido (sem WhatsApp)">${i.invalid} inválidos</span>` : ''}
+        ${i.unavailable ? `<span class="badge yellow" title="Marcados pela equipe como número indisponível">${i.unavailable} indisponíveis</span>` : ''}
         <button type="button" class="btn sm danger" data-del-import="${i.id}">Apagar lista</button></span></div>`).join('')}</div>` : ''}
     ${state.stats.hiddenDuplicates ? `<p class="sub">${state.stats.hiddenDuplicates} contato(s) repetido(s) de planilhas anteriores estão ocultos da lista da equipe.</p>` : ''}
     ${state.stats.badPhones ? `<p class="sub">${state.stats.badPhones} contato(s) com telefone fixo ou número inválido estão ocultos da lista da equipe.</p>` : ''}
