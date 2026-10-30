@@ -14,6 +14,7 @@ const storage = createStorage(DB_FILE);
 
 const STATUSES = [
   { id: 'novo', label: 'A prospectar' },
+  { id: 'mensagem_enviada', label: 'Mensagem enviada' },
   { id: 'respondidos', label: 'Respondidos' },
   { id: 'interessou_exemplo', label: 'Interessou no exemplo' },
   { id: 'respondeu_exemplo', label: 'Respondeu o exemplo' },
@@ -107,6 +108,8 @@ function migrate() {
   const recalcManager = db.settings.commission.managerBase !== 'sale';
   db.settings.commission.managerBase = 'sale';
   for (const c of db.contacts) {
+    // "A prospectar" passou a ser só quem não recebeu mensagem; quem já recebeu vai para "Mensagem enviada".
+    if (c.status === 'novo' && c.messaged) c.status = 'mensagem_enviada';
     if (!c.sold) continue;
     const role = db.users.find(u => u.id === c.soldBy)?.role;
     if (c.sellerCommission == null) {
@@ -284,12 +287,16 @@ app.patch('/api/contacts/:id', auth(), (req, res) => {
   if (typeof b.messaged === 'boolean') {
     c.messaged = b.messaged;
     c.messagedAt = b.messaged ? now : null;
+    // Marcar "mandou msg" tira o contato de "A prospectar"; desmarcar devolve.
+    if (b.messaged && c.status === 'novo') c.status = 'mensagem_enviada';
+    if (!b.messaged && c.status === 'mensagem_enviada') c.status = 'novo';
   }
   if (b.status !== undefined) {
     if (!STATUS_IDS.includes(b.status)) return res.status(400).json({ error: 'Lista inválida.' });
     if (b.status === 'reuniao' && c.status !== 'reuniao') c.meetingAt = now;
     c.status = b.status;
     if (b.status !== 'novo' && !c.messaged) { c.messaged = true; c.messagedAt = now; }
+    if (b.status === 'novo') { c.messaged = false; c.messagedAt = null; }
   }
   // Número indisponível: o contato sai da lista de todos, mas continua guardado para barrar a reimportação.
   if (b.unavailable === true) {

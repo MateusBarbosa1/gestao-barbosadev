@@ -186,7 +186,7 @@ function ceoView() {
       ${kpi('Vendas fechadas', team.salesCount, periodText())}
       ${kpi('Reuniões', team.meetings, periodText())}
       ${kpi('Mensagens enviadas', team.messaged, periodText())}
-      ${kpi('Contatos na base', team.contacts, `${team.pending} ainda sem mensagem`)}
+      ${kpi('Contatos na base', team.contacts, `${team.pending} a prospectar (sem mensagem)`)}
     </section>
 
     ${importCard()}
@@ -294,7 +294,7 @@ function sellersTable(perUser) {
   return `<div class="table-wrap"><table>
     <thead><tr><th>Nome</th><th class="num">Contatos</th><th class="num">A prospectar</th><th class="num">Mensagens</th><th class="num">Respondidos+</th><th class="num">Reuniões</th><th class="num">Vendas</th><th class="num">Total vendido</th><th class="num">Comissão</th><th>Meta hoje</th><th>Meta msgs (mês)</th><th>Meta vendas (mês)</th></tr></thead>
     <tbody>${rows.map(p => {
-      const engaged = p.contacts - p.byStatus.novo;
+      const engaged = p.contacts - p.byStatus.novo - (p.byStatus.mensagem_enviada || 0);
       return `<tr>
         <td><span class="name">${esc(p.user.name)}</span> <span class="badge">${ROLE_LABEL[p.user.role]}</span></td>
         <td class="num">${p.contacts}</td><td class="num">${p.pending}</td><td class="num">${p.messaged}</td>
