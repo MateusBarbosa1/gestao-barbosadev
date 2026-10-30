@@ -371,10 +371,25 @@ function meetingsCard(meetings) {
   </section>`;
 }
 
+// Funil acumulado: cada etapa conta quem está nela ou já passou dela (quem marcou reunião também respondeu etc.).
+// "Mensagem enviada" é % da base; as etapas seguintes são % de todas as mensagens enviadas.
 function funnel(byStatus) {
-  const max = Math.max(1, ...Object.values(byStatus));
-  return `<div class="funnel">${state.statuses.map(s => `
-    <div class="funnel-row"><span>${s.label}</span><div class="funnel-bar"><i style="width:${(byStatus[s.id] || 0) / max * 100}%"></i></div><strong class="num">${byStatus[s.id] || 0}</strong></div>`).join('')}</div>`;
+  const ids = state.statuses.map(s => s.id);
+  const reached = i => ids.slice(i).reduce((n, id) => n + (byStatus[id] || 0), 0);
+  const total = reached(0);
+  const sent = reached(1);
+  const pct = (n, of) => of ? `${Math.round(n / of * 100)}%` : '—';
+  const rows = [
+    { label: 'Contatos na base', n: total, note: '' },
+    ...state.statuses.slice(1).map((s, k) => {
+      const n = reached(k + 1);
+      return { label: s.label, n, note: k === 0 ? `${pct(n, total)} da base` : `${pct(n, sent)} das mensagens` };
+    }),
+  ];
+  return `<div class="funnel">${rows.map(r => `
+    <div class="funnel-row"><span>${r.label}</span><div class="funnel-bar"><i style="width:${total ? r.n / total * 100 : 0}%"></i></div>
+      <strong class="num">${r.n}</strong><span class="sub num">${r.note}</span></div>`).join('')}</div>
+    <p class="sub">Acumulado: cada etapa inclui quem já avançou para as seguintes.</p>`;
 }
 
 function usersCard() {

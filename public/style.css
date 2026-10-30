@@ -123,7 +123,8 @@ td select { min-width: 170px; }
 
 /* Funil */
 .funnel { display: grid; gap: 8px; }
-.funnel-row { display: grid; grid-template-columns: 170px 1fr 40px; gap: 10px; align-items: center; font-size: 13px; }
+.funnel-row { display: grid; grid-template-columns: 150px 1fr 36px auto; gap: 10px; align-items: center; font-size: 13px; }
+.funnel-row .sub { white-space: nowrap; }
 .funnel-bar { height: 10px; border-radius: 99px; background: var(--primary-soft); overflow: hidden; }
 .funnel-bar i { display: block; height: 100%; background: var(--primary); border-radius: 99px; }
 
@@ -150,7 +151,7 @@ td select { min-width: 170px; }
   .topbar, main { padding-left: 16px; padding-right: 16px; }
   .grid-2, .import-bar { grid-template-columns: 1fr; }
   .toolbar input, .toolbar select { min-width: 0; flex: 1; }
-  .funnel-row { grid-template-columns: 120px 1fr 32px; }
+  .funnel-row { grid-template-columns: 110px 1fr 32px auto; }
 }
 
 td.phone { white-space: nowrap; }
