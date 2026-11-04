@@ -171,7 +171,7 @@ function gerenteView() {
     </section>
     <div class="grid-2">
       ${meetingsCard(meetings)}
-      <section class="card"><div class="section-head"><h2>Funil da equipe</h2></div>${funnel(team.byStatus)}</section>
+      <section class="card"><div class="section-head"><h2>Funil da equipe</h2></div>${funnel(team.byStatus, team.followUp)}</section>
     </div>
     ${contactsSection(true)}`;
 }
@@ -229,7 +229,7 @@ function ceoView() {
 
     <div class="grid-2">
       ${usersCard()}
-      <section class="card"><div class="section-head"><h2>Funil geral</h2></div>${funnel(team.byStatus)}</section>
+      <section class="card"><div class="section-head"><h2>Funil geral</h2></div>${funnel(team.byStatus, team.followUp)}</section>
     </div>`;
 }
 
@@ -373,7 +373,7 @@ function meetingsCard(meetings) {
 
 // Funil acumulado: cada etapa conta quem está nela ou já passou dela (quem marcou reunião também respondeu etc.).
 // "Mensagem enviada" é % da base; as etapas seguintes são % de todas as mensagens enviadas.
-function funnel(byStatus) {
+function funnel(byStatus, followUp) {
   const ids = state.statuses.map(s => s.id);
   const reached = i => ids.slice(i).reduce((n, id) => n + (byStatus[id] || 0), 0);
   const total = reached(0);
@@ -386,6 +386,7 @@ function funnel(byStatus) {
       return { label: s.label, n, note: k === 0 ? `${pct(n, total)} da base` : `${pct(n, sent)} das mensagens` };
     }),
   ];
+  if (followUp != null) rows.push({ label: 'Em follow up', n: followUp, note: `${pct(followUp, sent)} das mensagens` });
   return `<div class="funnel">${rows.map(r => `
     <div class="funnel-row"><span>${r.label}</span><div class="funnel-bar"><i style="width:${total ? r.n / total * 100 : 0}%"></i></div>
       <strong class="num">${r.n}</strong><span class="sub num">${r.note}</span></div>`).join('')}</div>
@@ -406,7 +407,7 @@ function filteredContacts() {
   const q = state.search.trim().toLowerCase();
   return state.contacts.filter(c => {
     if (state.tab === 'todos') { /* sem filtro de lista */ }
-    else if (state.tab === 'mensagem') { if (c.messaged) return false; }
+    else if (state.tab === 'follow_up') { if (!c.followUp) return false; }
     else if (c.status !== state.tab) return false;
     if (state.vendorFilter && c.assignedTo !== state.vendorFilter) return false;
     if (q && ![c.name, c.niche, c.phone, c.site, c.city, c.address].some(v => String(v).toLowerCase().includes(q))) return false;
@@ -419,6 +420,7 @@ function contactsSection(isLead) {
   const count = id => base.filter(c => c.status === id).length;
   const tabs = [
     ...state.statuses.map(s => ({ id: s.id, label: s.id === 'novo' ? 'Próximos contatos' : s.label, n: count(s.id) })),
+    { id: 'follow_up', label: 'Follow up', n: base.filter(c => c.followUp).length },
     { id: 'todos', label: 'Todos', n: base.length },
   ];
   const list = filteredContacts();
@@ -457,7 +459,8 @@ function contactRow(c, isLead) {
     </div></td>
     ${isLead ? `<td>${esc(userName(c.assignedTo))}</td>` : ''}
     <td><select data-status>${state.statuses.map(s => `<option value="${s.id}" ${c.status === s.id ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
-      ${c.status === 'reuniao' && c.meetingDate ? `<div class="sub">${fmtDateTime(c.meetingDate)}</div>` : ''}</td>
+      ${c.status === 'reuniao' && c.meetingDate ? `<div class="sub">${fmtDateTime(c.meetingDate)}</div>` : ''}
+      ${c.sold ? '' : `<label class="follow-toggle"><input type="checkbox" data-followup ${c.followUp ? 'checked' : ''}> Follow up</label>`}</td>
     <td>${c.sold ? `<span class="badge green">${brl(c.saleValue)}</span>` : `<button class="btn sm success" data-sale>Vendeu</button>`}</td>
     <td><div class="links">
       <button class="btn sm ghost" data-edit="${c.id}">Detalhes</button>
@@ -490,6 +493,9 @@ function bindContactTable() {
     if (u) return openUserModal(state.users.find(x => x.id === u.dataset.user));
   };
   main.onchange = async e => {
+    if (e.target.matches('[data-followup]')) {
+      return updateContact(rowContact(e.target).id, { followUp: e.target.checked });
+    }
     if (e.target.matches('[data-msg]')) {
       await updateContact(rowContact(e.target).id, { messaged: e.target.checked });
       toast(e.target.checked ? 'Mensagem marcada como enviada' : 'Marcação removida');

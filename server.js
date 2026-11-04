@@ -19,7 +19,6 @@ const STATUSES = [
   { id: 'interessou_exemplo', label: 'Interessou no exemplo' },
   { id: 'respondeu_exemplo', label: 'Respondeu o exemplo' },
   { id: 'interessou_site', label: 'Se interessou no site' },
-  { id: 'follow_up', label: 'Follow up' },
   { id: 'reuniao', label: 'Marcou reunião' },
   { id: 'cliente', label: 'Clientes' },
 ];
@@ -110,6 +109,8 @@ function migrate() {
   for (const c of db.contacts) {
     // "A prospectar" passou a ser só quem não recebeu mensagem; quem já recebeu vai para "Mensagem enviada".
     if (c.status === 'novo' && c.messaged) c.status = 'mensagem_enviada';
+    // Follow up deixou de ser lista e virou marcação, que pode ficar junto com qualquer lista.
+    if (c.status === 'follow_up') { c.status = 'respondidos'; c.followUp = true; }
     if (!c.sold) continue;
     const role = db.users.find(u => u.id === c.soldBy)?.role;
     if (c.sellerCommission == null) {
@@ -296,7 +297,7 @@ app.patch('/api/contacts/:id', auth(), (req, res) => {
     if (b.status === 'reuniao' && c.status !== 'reuniao') c.meetingAt = now;
     c.status = b.status;
     if (b.status !== 'novo' && !c.messaged) { c.messaged = true; c.messagedAt = now; }
-    if (b.status === 'novo') { c.messaged = false; c.messagedAt = null; }
+    if (b.status === 'novo') { c.messaged = false; c.messagedAt = null; c.followUp = false; }
   }
   // Número indisponível: o contato sai da lista de todos, mas continua guardado para barrar a reimportação.
   if (b.unavailable === true) {
@@ -304,6 +305,11 @@ app.patch('/api/contacts/:id', auth(), (req, res) => {
     c.unavailable = true;
     c.unavailableAt = now;
     c.unavailableBy = req.user.id;
+  }
+  if (typeof b.followUp === 'boolean') {
+    c.followUp = b.followUp;
+    if (b.followUp && !c.messaged) { c.messaged = true; c.messagedAt = now; }
+    if (b.followUp && c.status === 'novo') c.status = 'mensagem_enviada';
   }
   if (b.meetingDate !== undefined) c.meetingDate = b.meetingDate || null;
   if (b.notes !== undefined) c.notes = String(b.notes);
@@ -325,6 +331,7 @@ app.post('/api/contacts/:id/sale', auth(), (req, res) => {
   const sellerRole = db.users.find(u => u.id === c.soldBy)?.role;
   Object.assign(c, splitSale(value, sellerRole, db.settings.commission));
   c.status = 'cliente';
+  c.followUp = false;
   if (!c.messaged) { c.messaged = true; c.messagedAt = c.soldAt; }
   save();
   res.json(c);
@@ -334,7 +341,7 @@ app.delete('/api/contacts/:id/sale', auth('gerente', 'ceo'), (req, res) => {
   const c = db.contacts.find(x => x.id === req.params.id);
   if (!c) return res.status(404).json({ error: 'Contato não encontrado.' });
   Object.assign(c, {
-    sold: false, saleValue: 0, soldAt: null, soldBy: null, status: 'follow_up',
+    sold: false, saleValue: 0, soldAt: null, soldBy: null, status: 'interessou_site', followUp: true,
     sellerPct: null, sellerCommission: null, managerCommission: null, bdShare: null,
   });
   save();
@@ -411,6 +418,7 @@ function statsFor(contacts, month) {
     pending: contacts.filter(c => !c.messaged).length,
     messaged: contacts.filter(c => c.messaged && inMonth(c.messagedAt, month)).length,
     meetings: contacts.filter(c => c.meetingAt && inMonth(c.meetingAt, month)).length,
+    followUp: contacts.filter(c => c.followUp).length,
     salesCount: sales.length,
     salesTotal: sum(sales, 'saleValue'),
     sellerCommission: sum(sales, 'sellerCommission'),
@@ -547,7 +555,7 @@ function contactKeys(c) {
   return keys;
 }
 
-const touched = c => c.messaged || c.sold || c.status !== 'novo';
+const touched = c => c.messaged || c.sold || c.followUp || c.status !== 'novo';
 
 // Contatos repetidos (o mesmo estabelecimento enviado por outra planilha) que o funcionário não deve ver.
 // Em cada grupo de repetidos fica visível o que já foi trabalhado (ou o mais antigo);

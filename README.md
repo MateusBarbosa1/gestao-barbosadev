@@ -22,7 +22,7 @@ Troque as senhas no primeiro acesso (botão **Senha** no topo). O CEO pode criar
 
 ## O que cada perfil vê
 
-- **Vendedor**: lista de próximos contatos (nome, nicho, número com link do WhatsApp, site, Google Maps), checkbox de "mensagem enviada", mover para listas (Respondidos, Interessou no exemplo, Respondeu o exemplo, Se interessou no site, Follow up, Marcou reunião, Clientes), botão **Vendeu** com valor, e a própria comissão.
+- **Vendedor**: lista de próximos contatos (nome, nicho, número com link do WhatsApp, site, Google Maps), checkbox de "mensagem enviada", mover para listas (Mensagem enviada, Respondidos, Interessou no exemplo, Respondeu o exemplo, Se interessou no site, Marcou reunião, Clientes), marcar **Follow up** junto com qualquer lista, botão **Vendeu** com valor, e a própria comissão.
 - **Gerente Comercial**: resultados de cada vendedor, funil da equipe, reuniões, a mesma lista de contatos (com filtro por vendedor) e a própria comissão.
 - **CEO**: não prospecta. Vê valores vendidos, parte da Barbosa Dev, comissões a pagar, vendas, reuniões e contatos; define as comissões; sobe a planilha Excel, confere a prévia e envia para o gerente comercial ou para um vendedor.
 
