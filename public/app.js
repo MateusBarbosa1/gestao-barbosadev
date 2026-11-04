@@ -7,7 +7,7 @@ const state = {
   users: [],
   stats: null,
   settings: null,
-  month: new Date().toISOString().slice(0, 7),
+  month: new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 7),
   tab: 'novo',
   search: '',
   vendorFilter: '',
@@ -17,8 +17,8 @@ const ROLE_LABEL = { vendedor: 'Vendedor', gerente: 'Gerente Comercial', ceo: 'C
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const brl = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('pt-BR') : '';
-const fmtDateTime = iso => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '';
+const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
+const fmtDateTime = iso => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }) : '';
 const statusLabel = id => state.statuses.find(s => s.id === id)?.label || id;
 const userName = id => state.users.find(u => u.id === id)?.name || (id === state.user?.id ? state.user.name : '—');
 const url = u => !u ? '' : /^https?:\/\//i.test(u) ? u : `https://${u}`;

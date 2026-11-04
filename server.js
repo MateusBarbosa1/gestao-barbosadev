@@ -391,7 +391,9 @@ app.put('/api/settings/commission', auth('ceo'), (req, res) => {
 // ---------- Estatísticas ----------
 // month = "AAAA-MM" filtra eventos (mensagens, reuniões, vendas) daquele mês; vazio = todo o período.
 // Datas comparadas no fuso do servidor (AAAA-MM-DD).
-const localDate = iso => new Date(iso).toLocaleDateString('sv-SE');
+// Dias e meses sempre no horário de Brasília (o servidor do Render roda em UTC, 3h à frente).
+const TIME_ZONE = process.env.APP_TIMEZONE || 'America/Sao_Paulo';
+const localDate = iso => new Date(iso).toLocaleDateString('sv-SE', { timeZone: TIME_ZONE });
 function inMonth(iso, month) {
   return !!iso && (!month || localDate(iso).slice(0, 7) === month);
 }
