@@ -171,7 +171,7 @@ function gerenteView() {
     </section>
     <div class="grid-2">
       ${meetingsCard(meetings)}
-      <section class="card"><div class="section-head"><h2>Funil da equipe</h2></div>${funnel(team.byStatus, team.followUp)}</section>
+      ${funnelCard('Funil da equipe')}
     </div>
     ${contactsSection(true)}`;
 }
@@ -229,7 +229,7 @@ function ceoView() {
 
     <div class="grid-2">
       ${usersCard()}
-      <section class="card"><div class="section-head"><h2>Funil geral</h2></div>${funnel(team.byStatus, team.followUp)}</section>
+      ${funnelCard('Funil geral')}
     </div>`;
 }
 
@@ -371,26 +371,51 @@ function meetingsCard(meetings) {
   </section>`;
 }
 
+const brMonth = iso => new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }).slice(0, 7);
+
+// Card do funil com seletor próprio: abre no mês atual, com opção "Geral" (todos os meses).
+function funnelCard(title) {
+  const current = brMonth(new Date().toISOString());
+  if (state.funnelMonth === undefined) state.funnelMonth = current;
+  const months = new Set([current]);
+  state.contacts.forEach(c => { if (c.messagedAt) months.add(brMonth(c.messagedAt)); });
+  const options = [...months].sort().reverse();
+  return `<section class="card"><div class="section-head"><h2>${title}</h2>
+      <select id="funnel-month">
+        ${options.map(m => `<option value="${m}" ${state.funnelMonth === m ? 'selected' : ''}>${monthName(m)}</option>`).join('')}
+        <option value="" ${state.funnelMonth === '' ? 'selected' : ''}>Geral (todos os meses)</option>
+      </select></div>
+    ${funnel(state.contacts, state.funnelMonth)}</section>`;
+}
+
 // Funil acumulado: cada etapa conta quem está nela ou já passou dela (quem marcou reunião também respondeu etc.).
-// "Mensagem enviada" é % da base; as etapas seguintes são % de todas as mensagens enviadas.
-function funnel(byStatus, followUp) {
+// Geral: toda a base; "Mensagem enviada" é % da base. Num mês: os contatos que receberam a primeira
+// mensagem naquele mês e até onde eles chegaram. As etapas seguintes são % das mensagens enviadas.
+function funnel(contacts, month) {
+  const list = month ? contacts.filter(c => c.messagedAt && brMonth(c.messagedAt) === month) : contacts;
   const ids = state.statuses.map(s => s.id);
+  const byStatus = {};
+  list.forEach(c => { byStatus[c.status] = (byStatus[c.status] || 0) + 1; });
   const reached = i => ids.slice(i).reduce((n, id) => n + (byStatus[id] || 0), 0);
-  const total = reached(0);
   const sent = reached(1);
+  const followUp = list.filter(c => c.followUp).length;
   const pct = (n, of) => of ? `${Math.round(n / of * 100)}%` : '—';
-  const rows = [
-    { label: 'Contatos na base', n: total, note: '' },
-    ...state.statuses.slice(1).map((s, k) => {
-      const n = reached(k + 1);
-      return { label: s.label, n, note: k === 0 ? `${pct(n, total)} da base` : `${pct(n, sent)} das mensagens` };
-    }),
-  ];
-  if (followUp != null) rows.push({ label: 'Em follow up', n: followUp, note: `${pct(followUp, sent)} das mensagens` });
+  const rows = month
+    ? [{ label: 'Recebidos no mês', n: contacts.filter(c => c.createdAt && brMonth(c.createdAt) === month).length, note: 'contatos novos na base' }]
+    : [{ label: 'Contatos na base', n: reached(0), note: '' }];
+  state.statuses.slice(1).forEach((s, k) => {
+    const n = reached(k + 1);
+    const note = k > 0 ? `${pct(n, sent)} das mensagens` : month ? 'base do funil do mês' : `${pct(n, reached(0))} da base`;
+    rows.push({ label: s.label, n, note });
+  });
+  rows.push({ label: 'Em follow up', n: followUp, note: `${pct(followUp, sent)} das mensagens` });
+  const max = Math.max(1, ...rows.map(r => r.n));
   return `<div class="funnel">${rows.map(r => `
-    <div class="funnel-row"><span>${r.label}</span><div class="funnel-bar"><i style="width:${total ? r.n / total * 100 : 0}%"></i></div>
+    <div class="funnel-row"><span>${r.label}</span><div class="funnel-bar"><i style="width:${r.n / max * 100}%"></i></div>
       <strong class="num">${r.n}</strong><span class="sub num">${r.note}</span></div>`).join('')}</div>
-    <p class="sub">Acumulado: cada etapa inclui quem já avançou para as seguintes.</p>`;
+    <p class="sub">${month
+      ? `Contatos que receberam mensagem em ${monthName(month)} e até onde chegaram. Acumulado: cada etapa inclui quem já avançou.`
+      : 'Acumulado: cada etapa inclui quem já avançou para as seguintes.'}</p>`;
 }
 
 function usersCard() {
@@ -493,6 +518,7 @@ function bindContactTable() {
     if (u) return openUserModal(state.users.find(x => x.id === u.dataset.user));
   };
   main.onchange = async e => {
+    if (e.target.id === 'funnel-month') { state.funnelMonth = e.target.value; return render(); }
     if (e.target.matches('[data-followup]')) {
       return updateContact(rowContact(e.target).id, { followUp: e.target.checked });
     }

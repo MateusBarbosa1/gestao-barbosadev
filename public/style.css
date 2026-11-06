@@ -125,6 +125,7 @@ td select { min-width: 170px; }
 .funnel { display: grid; gap: 8px; }
 .funnel-row { display: grid; grid-template-columns: 150px 1fr 36px auto; gap: 10px; align-items: center; font-size: 13px; }
 .funnel-row .sub { white-space: nowrap; }
+#funnel-month { width: auto; padding: 4px 8px; font-size: 13px; }
 .follow-toggle { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--muted, #64748b); cursor: pointer; white-space: nowrap; }
 .follow-toggle input { margin: 0; }
 .funnel-bar { height: 10px; border-radius: 99px; background: var(--primary-soft); overflow: hidden; }
