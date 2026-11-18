@@ -20,3 +20,12 @@ services:
       # Token do GitHub com permissão "Contents: Read and write" só nesse repositório
       - key: GITHUB_TOKEN
         sync: false
+      # WhatsApp Cloud API (ver deploy/WHATSAPP.md)
+      - key: WA_TOKEN
+        sync: false
+      - key: WA_APP_SECRET
+        sync: false
+      - key: WA_VERIFY_TOKEN
+        sync: false
+      - key: WA_GRAPH_VERSION
+        value: v23.0

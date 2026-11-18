@@ -7,6 +7,11 @@ const XLSX = require('xlsx');
 const crypto = require('crypto');
 const path = require('path');
 const { createStorage } = require('./storage');
+const { ensureWhatsAppSchema } = require('./whatsapp/schema');
+const { createWebhook } = require('./whatsapp/webhook');
+const { createQueue } = require('./whatsapp/queue');
+const { createRoutes } = require('./whatsapp/routes');
+const { toE164 } = require('./whatsapp/schema');
 
 const PORT = process.env.PORT || 3000;
 const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'data', 'db.json');
@@ -21,6 +26,9 @@ const STATUSES = [
   { id: 'interessou_site', label: 'Se interessou no site' },
   { id: 'reuniao', label: 'Marcou reunião' },
   { id: 'cliente', label: 'Clientes' },
+  // Finais: ficam fora do funil acumulado.
+  { id: 'perdido', label: 'Perdido', final: true },
+  { id: 'opt_out', label: 'Opt-out (não quer receber)', final: true },
 ];
 const STATUS_IDS = STATUSES.map(s => s.id);
 
@@ -91,6 +99,7 @@ async function load() {
   db = await storage.load();
   if (!db) {
     db = seed();
+    ensureWhatsAppSchema(db);
     console.warn('Nenhum dado encontrado: criados os usuários iniciais com as senhas padrão. Troque-as no primeiro acesso.');
     save();
   } else {
@@ -100,6 +109,7 @@ async function load() {
 // Bases antigas tinham um percentual fixo de vendedor; passa a usar faixas e recalcula vendas sem divisão gravada.
 function migrate() {
   if (!db.settings.goals) db.settings.goals = defaultGoals();
+  ensureWhatsAppSchema(db);
   if (!db.settings.commission?.tiers) {
     db.settings.commission = defaultCommission();
   }
@@ -153,6 +163,10 @@ function userFromToken(token) {
 }
 
 const app = express();
+app.set('trust proxy', 1); // Render fica atrás de um proxy: req.ip passa a ser o IP real
+// Webhook do WhatsApp antes do express.json: a assinatura precisa do corpo original.
+const webhook = createWebhook({ getDb: () => db, save, uid });
+app.use(webhook.router);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/healthz', (req, res) => res.send('ok'));
@@ -173,6 +187,11 @@ function auth(...roles) {
 function canSee(user, contact) {
   return user.role !== 'vendedor' || contact.assignedTo === user.id;
 }
+
+// ---------- WhatsApp (fila de disparo e rotas /api/wa) ----------
+const waLog = (...args) => console.log('[whatsapp]', ...args);
+const waQueue = createQueue({ getDb: () => db, save, uid, conversationFor: webhook.conversationFor, phoneType, log: waLog });
+app.use('/api/wa', createRoutes({ getDb: () => db, save, uid, auth, canSee, queue: waQueue, log: waLog }));
 
 // ---------- Auth ----------
 app.post('/api/login', (req, res) => {
@@ -276,6 +295,16 @@ function newContact(b, createdBy, importId = null) {
     importId,
     createdAt: new Date().toISOString(),
     createdBy,
+    // WhatsApp: telefone internacional, origem e consentimento (ver whatsapp/schema.js).
+    phoneE164: toE164(b.phone),
+    origin: b.origin || 'manual',
+    optIn: !!b.optIn,
+    optInAt: b.optIn ? new Date().toISOString() : null,
+    optInSource: b.optIn ? (b.optInSource || b.origin || 'manual') : null,
+    optOut: false,
+    optOutAt: null,
+    waPhoneNumberId: null,
+    lastInboundAt: null,
   };
 }
 
@@ -294,6 +323,12 @@ app.patch('/api/contacts/:id', auth(), (req, res) => {
   }
   if (b.status !== undefined) {
     if (!STATUS_IDS.includes(b.status)) return res.status(400).json({ error: 'Lista inválida.' });
+    // Opt-out bloqueia envios. Só o CEO desfaz (ex.: o cliente pediu para voltar a receber).
+    if (c.optOut && b.status !== 'opt_out' && req.user.role !== 'ceo') {
+      return res.status(400).json({ error: 'Este contato pediu para não receber mensagens. Só o CEO pode tirar do opt-out.' });
+    }
+    if (b.status === 'opt_out') { c.optOut = true; c.optOutAt = c.optOutAt || now; c.followUp = false; }
+    else if (c.optOut) { c.optOut = false; c.optOutAt = null; }
     if (b.status === 'reuniao' && c.status !== 'reuniao') c.meetingAt = now;
     c.status = b.status;
     if (b.status !== 'novo' && !c.messaged) { c.messaged = true; c.messagedAt = now; }
@@ -314,6 +349,13 @@ app.patch('/api/contacts/:id', auth(), (req, res) => {
   if (b.meetingDate !== undefined) c.meetingDate = b.meetingDate || null;
   if (b.notes !== undefined) c.notes = String(b.notes);
   for (const f of ['name', 'niche', 'phone', 'site', 'maps', 'address', 'city']) if (b[f] !== undefined) c[f] = String(b[f]).trim();
+  if (b.phone !== undefined) c.phoneE164 = toE164(c.phone);
+  // Consentimento marcado pela equipe fica registrado com quem marcou.
+  if (typeof b.optIn === 'boolean' && b.optIn !== !!c.optIn) {
+    c.optIn = b.optIn;
+    c.optInAt = b.optIn ? now : null;
+    c.optInSource = b.optIn ? `marcado por ${req.user.name}` : null;
+  }
   if (b.assignedTo && req.user.role !== 'vendedor') c.assignedTo = b.assignedTo;
   save();
   res.json(c);
@@ -351,7 +393,12 @@ app.delete('/api/contacts/:id/sale', auth('gerente', 'ceo'), (req, res) => {
 app.delete('/api/contacts/:id', auth('gerente', 'ceo'), (req, res) => {
   const i = db.contacts.findIndex(x => x.id === req.params.id);
   if (i < 0) return res.status(404).json({ error: 'Contato não encontrado.' });
+  // LGPD: apaga o contato e tudo do WhatsApp ligado a ele (mensagens, conversa, fila).
+  const id = db.contacts[i].id;
   db.contacts.splice(i, 1);
+  db.messages = db.messages.filter(m => m.contactId !== id);
+  db.conversations = db.conversations.filter(c => c.contactId !== id);
+  db.dispatchItems = db.dispatchItems.filter(d => d.contactId !== id);
   save();
   res.json({ ok: true });
 });
@@ -501,7 +548,12 @@ const HEADER_MAP = [
   ['maps', ['google maps', 'link do google maps', 'maps', 'url', 'link maps', 'link google', 'mapa']],
   ['address', ['endereco', 'address', 'localizacao']],
   ['city', ['cidade', 'city', 'municipio']],
+  // WhatsApp: vendedor responsável, origem do contato e consentimento.
+  ['seller', ['vendedor', 'vendedor responsavel', 'responsavel', 'seller']],
+  ['origin', ['origem', 'origin', 'fonte']],
+  ['optIn', ['optin', 'opt-in', 'opt in', 'consentimento', 'autorizou']],
 ];
+const YES = /^(sim|s|yes|y|true|1|x|ok)$/i;
 // Primeiro casa nomes exatos em todas as colunas; só depois tenta por trecho do nome.
 function mapHeaders(headers) {
   const mapping = {};
@@ -626,15 +678,24 @@ function parseSheet(buffer, filename = '') {
   // Já enviado antes (em qualquer planilha ou cadastro) ou repetido dentro da própria planilha.
   const seen = new Set(db.contacts.flatMap(contactKeys));
   const unavailablePhones = new Set(db.contacts.filter(c => c.unavailable).map(c => phoneKey(c.phone)).filter(Boolean));
+  const defaultOrigin = /dataset_crawler-google-places/i.test(filename) ? 'google_maps' : 'csv';
+  const sellers = db.users.filter(u => u.active && u.role !== 'ceo');
   const items = rows.map(row => {
-    const data = { name: '', niche: '', phone: '', site: '', maps: '', address: '', city: '' };
+    const data = { name: '', niche: '', phone: '', site: '', maps: '', address: '', city: '', seller: '', origin: '', optIn: '' };
     for (const [h, f] of Object.entries(mapping)) data[f] = String(row[h] ?? '').trim();
     // O extrator do Google Maps não traz o link do local: monta uma busca pelo nome + endereço.
     if (!data.maps) data.maps = mapsSearch(data.name, data.address || data.city);
+    data.origin = norm(data.origin).replace(/\s+/g, '_') || defaultOrigin;
+    data.optIn = YES.test(data.optIn);
+    // Vendedor da planilha: casa pelo usuário (login) ou pelo nome.
+    const seller = data.seller ? sellers.find(u => u.username === norm(data.seller) || norm(u.name) === norm(data.seller)) : null;
+    data.assignedTo = seller?.id || null;
+    data.sellerName = seller?.name || '';
     const keys = contactKeys(data);
     let status = 'novo';
     const type = phoneType(data.phone);
     if (!data.name) status = 'sem_nome';
+    else if (data.seller && !seller) status = 'vendedor_desconhecido';
     else if (type === 'fixo' || type === 'invalido') status = type;
     else if (unavailablePhones.has(phoneKey(data.phone))) status = 'indisponivel';
     else if (keys.some(k => seen.has(k))) status = 'duplicado';
@@ -655,11 +716,16 @@ app.post('/api/import', auth('ceo'), upload.single('file'), (req, res) => {
 
   if (req.query.dryRun) return res.json({ file: req.file.originalname, columns: mapping, items, added, skipped });
 
-  // Destino: o gerente, um vendedor específico ou "distribuir" igualmente entre os vendedores ativos.
+  // Destino: o vendedor da coluna "Vendedor" de cada linha; nas linhas sem ele, o gerente,
+  // um vendedor específico ou "distribuir" igualmente entre os vendedores ativos.
   const target = req.body.assignTo;
   const vendors = db.users.filter(u => u.role === 'vendedor' && u.active);
+  const needTarget = items.some(i => i.status === 'novo' && !i.assignedTo);
   let pick, targetName;
-  if (target === 'distribuir') {
+  if (!needTarget) {
+    pick = () => null;
+    targetName = 'Vendedor de cada linha da planilha';
+  } else if (target === 'distribuir') {
     if (!vendors.length) return res.status(400).json({ error: 'Nenhum vendedor ativo.' });
     let i = 0;
     pick = () => vendors[i++ % vendors.length].id;
@@ -674,7 +740,8 @@ app.post('/api/import', auth('ceo'), upload.single('file'), (req, res) => {
 
   const importId = uid();
   for (const item of items.filter(i => i.status === 'novo')) {
-    db.contacts.push(newContact({ ...item, assignedTo: pick() }, req.user.id, importId));
+    const contact = newContact({ ...item, assignedTo: item.assignedTo || pick(), optInSource: item.optIn ? `planilha ${req.file.originalname}` : null }, req.user.id, importId);
+    db.contacts.push(contact);
   }
   const skippedInvalid = items.filter(i => i.status === 'fixo' || i.status === 'invalido').length;
   db.imports.push({ id: importId, file: req.file.originalname, added, skipped, skippedInvalid,by: req.user.name, at: new Date().toISOString(), assignTo: target, assignToName: targetName });
@@ -698,10 +765,10 @@ app.delete('/api/imports/:id', auth('ceo'), (req, res) => {
 
 app.get('/api/template.xlsx', (req, res) => {
   const ws = XLSX.utils.aoa_to_sheet([
-    ['Nome', 'Nicho', 'Número', 'Site', 'Google Maps'],
-    ['Barbearia Exemplo', 'Barbearia', '(11) 99999-0000', 'https://exemplo.com.br', 'https://maps.google.com/?q=Barbearia+Exemplo'],
+    ['Nome', 'Nicho', 'Número', 'Site', 'Google Maps', 'Vendedor', 'Origem', 'Opt-in'],
+    ['Barbearia Exemplo', 'Barbearia', '(11) 99999-0000', 'https://exemplo.com.br', 'https://maps.google.com/?q=Barbearia+Exemplo', 'vendedor', 'formulario_site', 'sim'],
   ]);
-  ws['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 30 }, { wch: 45 }];
+  ws['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 30 }, { wch: 45 }, { wch: 14 }, { wch: 18 }, { wch: 8 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Contatos');
   res.setHeader('Content-Disposition', 'attachment; filename="modelo-contatos-barbosadev.xlsx"');
@@ -711,6 +778,9 @@ app.get('/api/template.xlsx', (req, res) => {
 
 // Só começa a atender depois de carregar os dados.
 load().then(() => {
+  // Um envio interrompido por reinício volta para a fila (a Meta não recebeu ou não confirmou).
+  for (const item of db.dispatchItems) if (item.status === 'sending') item.status = 'pending';
+  waQueue.start();
   app.listen(PORT, () => console.log(`Barbosa Dev — Gestão rodando em http://localhost:${PORT} (dados: ${storage.name})`));
 }).catch(err => {
   console.error('Não foi possível carregar os dados:', err.message);

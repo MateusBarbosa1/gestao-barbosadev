@@ -16,8 +16,18 @@ function fileStorage(file) {
     save(data) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       const tmp = file + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-      fs.renameSync(tmp, file);
+      const json = JSON.stringify(data, null, 2);
+      fs.writeFileSync(tmp, json);
+      // No Windows a troca falha (EPERM/EBUSY) se outro programa estiver lendo o arquivo
+      // naquele instante (antivírus, backup, editor): tenta de novo e, por fim, grava direto.
+      for (let i = 0; i < 5; i++) {
+        try { return fs.renameSync(tmp, file); } catch (err) {
+          if (!['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) throw err;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+        }
+      }
+      fs.writeFileSync(file, json);
+      fs.rmSync(tmp, { force: true });
     },
     async flush() {},
   };

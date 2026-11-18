@@ -44,10 +44,21 @@ O CEO pode alterar as faixas; a mudança vale para as próximas vendas.
 
 Aceita dois formatos:
 
-- **Modelo da Barbosa Dev** (baixe no painel do CEO): Nome, Nicho, Número, Site, Google Maps.
+- **Modelo da Barbosa Dev** (baixe no painel do CEO): Nome, Nicho, Número, Site, Google Maps e, opcionalmente:
+  - **Vendedor:** login ou nome do responsável. Nas linhas sem vendedor, vale o destino escolhido na tela.
+  - **Origem:** ex. `formulario_site`, `anuncio`.
+  - **Opt-in:** `sim`/`não`, se a pessoa autorizou receber mensagens.
+
+  O telefone é convertido para o formato internacional (`5581999999999`).
 - **Exportação do extrator do Google Maps** (`dataset_crawler-google-places_*.csv`): usa `title` como nome, `categoryName` como nicho, `phone`, `website`, `address` e `city`. Como essa exportação não traz o link do local, o sistema monta um link de busca no Google Maps com o nome + endereço.
 
 Números já cadastrados são ignorados (o mesmo número escrito com ou sem +55, parênteses ou traço conta como repetido).
+
+## WhatsApp (Cloud API oficial)
+
+O painel dispara o primeiro contato por template, numa fila com intervalo aleatório e teto diário por número. As respostas chegam pelo webhook e o vendedor conversa pelo próprio painel, com texto livre dentro da janela de 24h. A gestão acompanha envios, respostas, conversão, custo e a qualidade dos números.
+
+Configuração, variáveis de ambiente (`.env.example`), webhook, testes e pendências manuais: [deploy/WHATSAPP.md](deploy/WHATSAPP.md).
 
 ## Dados
 

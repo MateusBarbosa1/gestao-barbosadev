@@ -113,6 +113,7 @@ async function refresh() {
     api(`/stats${q}`),
     api('/settings'),
     isLead ? api('/users') : Promise.resolve([]),
+    waLoad(),
   ]);
   Object.assign(state, { contacts, stats, settings, users });
   render();
@@ -150,6 +151,7 @@ function vendedorView() {
     </section>
     ${goalsCard(me, 'Minhas metas')}
     ${meetingsCard(meetings)}
+    ${waConversationsCard()}
     ${contactsSection(false)}`;
 }
 
@@ -173,6 +175,8 @@ function gerenteView() {
       ${meetingsCard(meetings)}
       ${funnelCard('Funil da equipe')}
     </div>
+    ${waConversationsCard()}
+    ${waManagementCards()}
     ${contactsSection(true)}`;
 }
 
@@ -190,6 +194,9 @@ function ceoView() {
     </section>
 
     ${importCard()}
+
+    ${waManagementCards()}
+    ${waConversationsCard()}
 
     <section class="card">
       <div class="section-head"><h2>Resultados por pessoa</h2><span class="sub">${periodText()}</span></div>
@@ -233,7 +240,7 @@ function ceoView() {
     </div>`;
 }
 
-const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já enviado antes'], indisponivel: ['', 'Número indisponível'], fixo: ['', 'Telefone fixo (sem WhatsApp)'], invalido: ['', 'Número inválido'], sem_nome: ['', 'Sem nome'] };
+const IMPORT_STATUS = { novo: ['green', 'Novo'], duplicado: ['yellow', 'Já enviado antes'], indisponivel: ['', 'Número indisponível'], fixo: ['', 'Telefone fixo (sem WhatsApp)'], invalido: ['', 'Número inválido'], vendedor_desconhecido: ['', 'Vendedor não encontrado'], sem_nome: ['', 'Sem nome'] };
 
 function importCard() {
   const p = state.importPreview;
@@ -269,9 +276,10 @@ function importCard() {
       </form>
       <div class="table-wrap preview">
         <table>
-          <thead><tr><th>Nome</th><th>Nicho</th><th>Cidade</th><th>Número</th><th>Site</th><th>Google Maps</th><th>Situação</th></tr></thead>
+          <thead><tr><th>Nome</th><th>Nicho</th><th>Cidade</th><th>Número</th><th>Vendedor</th><th>Origem</th><th>Opt-in</th><th>Site</th><th>Google Maps</th><th>Situação</th></tr></thead>
           <tbody>${p.items.map(i => `<tr>
             <td class="name">${esc(i.name) || '—'}</td><td>${esc(i.niche)}</td><td>${esc(i.city)}</td><td>${esc(i.phone) || '<span class="sub">sem número</span>'}</td>
+            <td>${esc(i.sellerName || i.seller) || '<span class="sub">destino abaixo</span>'}</td><td>${esc(i.origin)}</td><td>${i.optIn ? 'sim' : '<span class="sub">não</span>'}</td>
             <td>${i.site ? `<a href="${esc(url(i.site))}" target="_blank" rel="noopener">${esc(i.site)}</a>` : ''}</td>
             <td>${i.maps ? `<a href="${esc(url(i.maps))}" target="_blank" rel="noopener">Abrir</a>` : ''}</td>
             <td><span class="badge ${IMPORT_STATUS[i.status][0]}">${IMPORT_STATUS[i.status][1]}</span></td></tr>`).join('')}</tbody>
@@ -393,7 +401,8 @@ function funnelCard(title) {
 // mensagem naquele mês e até onde eles chegaram. As etapas seguintes são % das mensagens enviadas.
 function funnel(contacts, month) {
   const list = month ? contacts.filter(c => c.messagedAt && brMonth(c.messagedAt) === month) : contacts;
-  const ids = state.statuses.map(s => s.id);
+  const stages = state.statuses.filter(s => !s.final);
+  const ids = stages.map(s => s.id);
   const byStatus = {};
   list.forEach(c => { byStatus[c.status] = (byStatus[c.status] || 0) + 1; });
   const reached = i => ids.slice(i).reduce((n, id) => n + (byStatus[id] || 0), 0);
@@ -403,12 +412,13 @@ function funnel(contacts, month) {
   const rows = month
     ? [{ label: 'Recebidos no mês', n: contacts.filter(c => c.createdAt && brMonth(c.createdAt) === month).length, note: 'contatos novos na base' }]
     : [{ label: 'Contatos na base', n: reached(0), note: '' }];
-  state.statuses.slice(1).forEach((s, k) => {
+  stages.slice(1).forEach((s, k) => {
     const n = reached(k + 1);
     const note = k > 0 ? `${pct(n, sent)} das mensagens` : month ? 'base do funil do mês' : `${pct(n, reached(0))} da base`;
     rows.push({ label: s.label, n, note });
   });
   rows.push({ label: 'Em follow up', n: followUp, note: `${pct(followUp, sent)} das mensagens` });
+  state.statuses.filter(s => s.final).forEach(s => rows.push({ label: s.label, n: byStatus[s.id] || 0, note: 'fora do funil' }));
   const max = Math.max(1, ...rows.map(r => r.n));
   return `<div class="funnel">${rows.map(r => `
     <div class="funnel-row"><span>${r.label}</span><div class="funnel-bar"><i style="width:${r.n / max * 100}%"></i></div>
@@ -487,7 +497,8 @@ function contactRow(c, isLead) {
       ${c.status === 'reuniao' && c.meetingDate ? `<div class="sub">${fmtDateTime(c.meetingDate)}</div>` : ''}
       ${c.sold ? '' : `<label class="follow-toggle"><input type="checkbox" data-followup ${c.followUp ? 'checked' : ''}> Follow up</label>`}</td>
     <td>${c.sold ? `<span class="badge green">${brl(c.saleValue)}</span>` : `<button class="btn sm success" data-sale>Vendeu</button>`}</td>
-    <td><div class="links">
+    <td><div class="row-actions">
+      <button class="btn sm ghost" data-wa-chat="${c.id}" title="Histórico, template e mensagens pelo WhatsApp da empresa">Conversa</button>
       <button class="btn sm ghost" data-edit="${c.id}">Detalhes</button>
       ${c.sold ? '' : `<button class="btn sm ghost danger" data-unavailable title="O número não existe ou não tem WhatsApp: tira o contato da lista">Nº indisponível</button>`}
     </div></td>
