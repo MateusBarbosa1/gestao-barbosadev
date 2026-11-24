@@ -14,10 +14,11 @@
 // waNumbers        números da empresa: { id, phoneNumberId, displayPhone, userId, dailyCap,
 //                  qualityRating, qualityCheckedAt, active }
 // conversations    uma por contato + número: { id, contactId, phoneNumberId, userId,
-//                  lastInboundAt, lastOutboundAt, lastMessageAt, unread }
+//                  lastInboundAt, lastOutboundAt, lastMessageAt }
 // messages         { id, waMessageId (único), conversationId, contactId, phoneNumberId, userId,
-//                  direction in|out, type text|template|unsupported, templateName, text,
-//                  unsupportedType, status queued|sent|delivered|read|failed|received,
+//                  direction in|out, type (template na saída; tipo do WhatsApp na entrada),
+//                  templateName, text (só do template enviado; o que o cliente escreve não é
+//                  guardado: a conversa segue no WhatsApp), status queued|sent|delivered|read|failed|received,
 //                  statusAt { sent, delivered, read, failed }, error { code, title },
 //                  pricing { category, billable }, createdAt }
 // waTemplates      templates aprovados na Meta: { id, name, language, category
@@ -55,6 +56,8 @@ function ensureWhatsAppSchema(db) {
     if (!Array.isArray(db[key])) db[key] = [];
   }
   db.settings.whatsapp = { ...defaultWhatsAppSettings(), ...(db.settings.whatsapp || {}) };
+  // LGPD: o texto das mensagens recebidas não é mais usado pelo painel.
+  for (const m of db.messages) if (m.direction === 'in' && m.text) m.text = null;
   for (const c of db.contacts) {
     if (c.phoneE164 === undefined) c.phoneE164 = toE164(c.phone);
     if (c.origin === undefined) c.origin = c.importId ? 'google_maps' : 'manual';

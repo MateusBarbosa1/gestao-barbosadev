@@ -150,8 +150,8 @@ function vendedorView() {
       ${kpi('Minha comissão', brl(me.commission), tierText(pct), true)}
     </section>
     ${goalsCard(me, 'Minhas metas')}
+    ${waFirstMessageCard()}
     ${meetingsCard(meetings)}
-    ${waConversationsCard()}
     ${contactsSection(false)}`;
 }
 
@@ -167,6 +167,7 @@ function gerenteView() {
       ${kpi('Minha comissão', brl(me?.commission), `${brl(me?.sellerCommission)} das minhas vendas + ${brl(me?.commission - me?.sellerCommission)} (${pct.gerente}% das vendas dos vendedores)`, true)}
     </section>
     ${me ? goalsCard(me, 'Minhas metas') : ''}
+    ${waFirstMessageCard()}
     <section class="card">
       <div class="section-head"><h2>Resultados dos vendedores</h2><span class="sub">${periodText()}</span></div>
       ${sellersTable(perUser.filter(p => p.user.id !== state.user.id))}
@@ -175,7 +176,6 @@ function gerenteView() {
       ${meetingsCard(meetings)}
       ${funnelCard('Funil da equipe')}
     </div>
-    ${waConversationsCard()}
     ${waManagementCards()}
     ${contactsSection(true)}`;
 }
@@ -196,7 +196,6 @@ function ceoView() {
     ${importCard()}
 
     ${waManagementCards()}
-    ${waConversationsCard()}
 
     <section class="card">
       <div class="section-head"><h2>Resultados por pessoa</h2><span class="sub">${periodText()}</span></div>
@@ -498,7 +497,6 @@ function contactRow(c, isLead) {
       ${c.sold ? '' : `<label class="follow-toggle"><input type="checkbox" data-followup ${c.followUp ? 'checked' : ''}> Follow up</label>`}</td>
     <td>${c.sold ? `<span class="badge green">${brl(c.saleValue)}</span>` : `<button class="btn sm success" data-sale>Vendeu</button>`}</td>
     <td><div class="row-actions">
-      <button class="btn sm ghost" data-wa-chat="${c.id}" title="Histórico, template e mensagens pelo WhatsApp da empresa">Conversa</button>
       <button class="btn sm ghost" data-edit="${c.id}">Detalhes</button>
       ${c.sold ? '' : `<button class="btn sm ghost danger" data-unavailable title="O número não existe ou não tem WhatsApp: tira o contato da lista">Nº indisponível</button>`}
     </div></td>
@@ -721,6 +719,8 @@ function openContactModal(c) {
     ${c && c.status === 'reuniao' ? `<label>Data da reunião<input name="meetingDate" type="datetime-local" value="${c.meetingDate ? c.meetingDate.slice(0, 16) : ''}"></label>` : ''}
     ${isLead ? `<label>Vendedor responsável<select name="assignedTo">${people.map(u => `<option value="${u.id}" ${v.assignedTo === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>` : ''}
     <label>Observações<textarea name="notes" rows="3">${esc(v.notes)}</textarea></label>
+    <label class="follow-toggle"><input type="checkbox" name="optIn" ${v.optIn ? 'checked' : ''}> Autorizou receber mensagens pelo WhatsApp (opt-in)</label>
+    ${c?.optOut ? '<p class="sub">Este contato pediu para não receber mensagens (opt-out).</p>' : ''}
     ${c?.sold ? `<p class="sub">Venda de ${brl(c.saleValue)} em ${fmtDate(c.soldAt)}</p>` : ''}
     <div class="modal-actions">
       ${c && isLead ? `<button type="submit" class="btn danger" value="delete" formnovalidate>Excluir</button>` : ''}
@@ -738,7 +738,7 @@ function openContactModal(c) {
         await api(`/contacts/${c.id}/sale`, { method: 'DELETE' });
         toast('Venda desfeita');
       } else {
-        const body = Object.fromEntries(f.entries());
+        const body = { ...Object.fromEntries(f.entries()), optIn: f.has('optIn') };
         if (c) await api(`/contacts/${c.id}`, { method: 'PATCH', body });
         else await api('/contacts', { method: 'POST', body });
         toast('Contato salvo');

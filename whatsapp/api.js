@@ -45,10 +45,17 @@ async function graph(path, { method = 'GET', body } = {}) {
   return data;
 }
 
-// Template aprovado. params: textos das variáveis do corpo, na ordem ({{1}}, {{2}}…).
+// Template aprovado. params: variáveis do corpo, na ordem. Cada uma é um texto ({{1}}, {{2}}…)
+// ou { name, text } para templates com variáveis nomeadas ({{nome}}, {{vendedor}}…).
 async function sendTemplate(phoneNumberId, to, template, params = []) {
   const components = params.length
-    ? [{ type: 'body', parameters: params.map(text => ({ type: 'text', text: String(text || '-').slice(0, 1000) })) }]
+    ? [{
+      type: 'body',
+      parameters: params.map(p => {
+        const { name, text } = typeof p === 'object' && p ? p : { name: null, text: p };
+        return { type: 'text', ...(name ? { parameter_name: name } : {}), text: String(text || '-').slice(0, 1000) };
+      }),
+    }]
     : [];
   const data = await graph(`${phoneNumberId}/messages`, {
     method: 'POST',
@@ -60,18 +67,9 @@ async function sendTemplate(phoneNumberId, to, template, params = []) {
   return data.messages?.[0]?.id;
 }
 
-// Texto livre: só funciona dentro da janela de 24h aberta pelo cliente.
-async function sendText(phoneNumberId, to, text) {
-  const data = await graph(`${phoneNumberId}/messages`, {
-    method: 'POST',
-    body: { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { body: text, preview_url: false } },
-  });
-  return data.messages?.[0]?.id;
-}
-
 // Nota de qualidade (GREEN, YELLOW, RED ou UNKNOWN) e dados do número.
 async function phoneInfo(phoneNumberId) {
   return graph(`${phoneNumberId}?fields=quality_rating,display_phone_number,verified_name`);
 }
 
-module.exports = { sendTemplate, sendText, phoneInfo, configured, WhatsAppError };
+module.exports = { sendTemplate, phoneInfo, configured, WhatsAppError };

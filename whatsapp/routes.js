@@ -1,115 +1,45 @@
 // Rotas /api/wa/* do painel (todas exigem login; as de configuração só o CEO).
+// O painel só dispara a PRIMEIRA mensagem (template); a conversa segue no WhatsApp da equipe.
 const express = require('express');
 const api = require('./api');
 const { brDate } = require('./queue');
 
-const WINDOW_MS = 24 * 3600_000;
-const windowEndsAt = contact => contact.lastInboundAt ? new Date(new Date(contact.lastInboundAt).getTime() + WINDOW_MS).toISOString() : null;
-const windowOpen = contact => !!contact.lastInboundAt && Date.now() - new Date(contact.lastInboundAt).getTime() < WINDOW_MS;
 const inMonth = (iso, month) => !!iso && (!month || brDate(iso).slice(0, 7) === month);
 const round2 = n => Math.round(n * 100) / 100;
 
-function createRoutes({ getDb, save, uid, auth, canSee, queue, log }) {
+function createRoutes({ getDb, save, uid, auth, queue }) {
   const r = express.Router();
   const lead = auth('gerente', 'ceo');
   const ceo = auth('ceo');
 
-  const findContact = (req, res) => {
-    const c = getDb().contacts.find(x => x.id === req.params.id);
-    if (!c || !canSee(req.user, c)) { res.status(404).json({ error: 'Contato não encontrado.' }); return null; }
-    return c;
-  };
   const publicTemplate = t => ({ id: t.id, name: t.name, language: t.language, category: t.category, params: t.params, body: t.body, active: t.active });
+
+  // Próximos contatos do dono do número que podem receber a primeira mensagem:
+  // "A prospectar", nunca receberam template, não estão na fila e não têm bloqueio (opt-out, fixo, sem opt-in…).
+  function candidates(db, number) {
+    const templated = new Set(db.messages.filter(m => m.direction === 'out' && m.type === 'template').map(m => m.contactId));
+    const queued = new Set(db.dispatchItems.filter(i => ['pending', 'sending'].includes(i.status)).map(i => i.contactId));
+    return db.contacts
+      .filter(c => c.assignedTo === number.userId && c.status === 'novo' && !c.unavailable && !templated.has(c.id) && !queued.has(c.id))
+      .filter(c => !queue.blockReason(db, c, number))
+      .sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+  }
 
   // Dados para montar as telas (nada de token ou segredo aqui).
   r.get('/config', auth(), (req, res) => {
     const db = getDb();
     const s = db.settings.whatsapp;
+    const myNumber = db.waNumbers.find(n => n.userId === req.user.id && n.active) || null;
     res.json({
       configured: api.configured(),
       templates: db.waTemplates.filter(t => t.active).map(publicTemplate),
-      myNumber: db.waNumbers.find(n => n.userId === req.user.id && n.active) || null,
-      queuePaused: !!s.queuePaused, pauseReason: s.pauseReason || null,
+      myNumber,
+      // Situação do número de quem está logado: enviadas hoje, fila, falhas e quantos ainda dá para enviar.
+      myQueue: myNumber ? { ...queue.summary(db).find(q => q.phoneNumberId === myNumber.phoneNumberId), available: candidates(db, myNumber).length } : null,
+      queuePaused: !!s.queuePaused, pauseReason: s.pauseReason || null, inWindow: queue.inSendWindow(s),
+      sendDays: s.sendDays, sendHours: s.sendHours, minDelaySec: s.minDelaySec, maxDelaySec: s.maxDelaySec,
       allowWithoutOptIn: !!s.allowWithoutOptIn,
     });
-  });
-
-  // ---------- Conversas ----------
-  // Contatos que responderam (têm mensagem do cliente), mais recentes primeiro.
-  r.get('/conversations', auth(), (req, res) => {
-    const db = getDb();
-    const list = db.conversations
-      .filter(conv => conv.lastInboundAt)
-      .map(conv => ({ conv, contact: db.contacts.find(c => c.id === conv.contactId) }))
-      .filter(({ contact }) => contact && canSee(req.user, contact))
-      .filter(({ contact }) => !req.query.vendor || req.user.role === 'vendedor' || contact.assignedTo === req.query.vendor)
-      .map(({ conv, contact }) => {
-        const last = db.messages.filter(m => m.conversationId === conv.id).at(-1);
-        return {
-          contactId: contact.id, name: contact.name, phone: contact.phone, status: contact.status, userId: contact.assignedTo,
-          lastMessageAt: conv.lastMessageAt, unread: conv.unread || 0, windowOpen: windowOpen(contact), optOut: !!contact.optOut,
-          lastText: last ? (last.text || `[${last.unsupportedType || last.type}]`).slice(0, 80) : '', lastDirection: last?.direction,
-        };
-      })
-      .sort((a, b) => (b.lastMessageAt || '').localeCompare(a.lastMessageAt || ''));
-    res.json(list);
-  });
-
-  r.get('/contacts/:id/messages', auth(), (req, res) => {
-    const contact = findContact(req, res);
-    if (!contact) return;
-    const db = getDb();
-    const messages = db.messages.filter(m => m.contactId === contact.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .map(m => ({ id: m.id, direction: m.direction, type: m.type, templateName: m.templateName, text: m.text, unsupportedType: m.unsupportedType, status: m.status, error: m.error?.title || null, createdAt: m.createdAt }));
-    // Quem abre a conversa dele mesmo zera as não lidas.
-    for (const conv of db.conversations) if (conv.contactId === contact.id && conv.userId === req.user.id && conv.unread) { conv.unread = 0; save(); }
-    const number = queue.numberFor(db, contact);
-    res.json({
-      contact: { id: contact.id, name: contact.name, phone: contact.phone, status: contact.status, optIn: !!contact.optIn, optOut: !!contact.optOut, origin: contact.origin, assignedTo: contact.assignedTo },
-      messages, windowOpen: windowOpen(contact), windowEndsAt: windowEndsAt(contact),
-      number: number ? { displayPhone: number.displayPhone, userId: number.userId } : null,
-      blockReason: queue.blockReason(db, contact, number),
-      queued: db.dispatchItems.some(i => i.contactId === contact.id && ['pending', 'sending'].includes(i.status)),
-    });
-  });
-
-  // Template para um contato: entra na fila com prioridade (respeita teto e intervalo).
-  r.post('/contacts/:id/template', auth(), (req, res) => {
-    const contact = findContact(req, res);
-    if (!contact) return;
-    const db = getDb();
-    const template = db.waTemplates.find(t => t.id === req.body?.templateId && t.active);
-    if (!template) return res.status(400).json({ error: 'Escolha um template.' });
-    const result = queue.enqueue(db, { contactIds: [contact.id], templateId: template.id, priority: true });
-    if (!result.added) return res.status(400).json({ error: `Não dá para enviar: ${result.skipped[0]?.reason}.` });
-    save();
-    queue.tick();
-    res.json({ ok: true });
-  });
-
-  // Texto livre: só dentro da janela de 24h desde a última mensagem do cliente.
-  r.post('/contacts/:id/text', auth(), async (req, res) => {
-    const contact = findContact(req, res);
-    if (!contact) return;
-    const db = getDb();
-    const text = String(req.body?.text || '').trim();
-    if (!text) return res.status(400).json({ error: 'Escreva a mensagem.' });
-    if (text.length > 4096) return res.status(400).json({ error: 'Mensagem muito longa.' });
-    if (contact.optOut) return res.status(400).json({ error: 'Este contato pediu para não receber mensagens.' });
-    if (!windowOpen(contact)) return res.status(400).json({ error: 'A janela de 24h está fechada: só é possível enviar template.' });
-    const number = queue.numberFor(db, contact);
-    if (!number) return res.status(400).json({ error: 'Este contato não tem número de WhatsApp da empresa vinculado.' });
-    if (contact.waPhoneNumberId && contact.waPhoneNumberId !== number.phoneNumberId) return res.status(400).json({ error: 'Contato atendido por outro número.' });
-    if (number.userId !== contact.assignedTo) return res.status(400).json({ error: 'Contato vinculado ao número de outro vendedor.' });
-    try {
-      const wamid = await api.sendText(number.phoneNumberId, contact.phoneE164, text);
-      const msg = queue.recordOutbound(db, { contact, number, type: 'text', text, wamid });
-      save();
-      res.json({ ok: true, id: msg.id });
-    } catch (err) {
-      log(`texto não enviado (${err.code ?? 'sem código'})`);
-      res.status(502).json({ error: `A Meta recusou: ${err.message}` });
-    }
   });
 
   // ---------- Templates (CEO) ----------
@@ -220,30 +150,25 @@ function createRoutes({ getDb, save, uid, auth, canSee, queue, log }) {
 
   // ---------- Disparos ----------
   // Pega os próximos contatos "A prospectar" de um vendedor (ou de todos com número) e põe na fila.
-  r.post('/dispatches', lead, (req, res) => {
+  // Primeira mensagem para os próximos N contatos "A prospectar". O vendedor só dispara do próprio
+  // número; gerente e CEO escolhem de quem (ou todos). A fila respeita intervalo, teto e horário.
+  r.post('/dispatches', auth(), (req, res) => {
     const db = getDb();
     const b = req.body || {};
     const template = db.waTemplates.find(t => t.id === b.templateId && t.active);
     if (!template) return res.status(400).json({ error: 'Escolha um template.' });
     const limit = Math.min(Math.max(Number(b.limit) || 0, 1), 2000);
-    const numbers = db.waNumbers.filter(n => n.active && (!b.userId || b.userId === 'all' || n.userId === b.userId));
-    if (!numbers.length) return res.status(400).json({ error: 'Nenhum número ativo para esse vendedor.' });
-    const templated = new Set(db.messages.filter(m => m.direction === 'out' && m.type === 'template').map(m => m.contactId));
-    const queued = new Set(db.dispatchItems.filter(i => ['pending', 'sending'].includes(i.status)).map(i => i.contactId));
-    const dispatch = { id: uid(), templateId: template.id, createdBy: req.user.id, createdAt: new Date().toISOString(), userId: b.userId || 'all' };
+    const owner = req.user.role === 'vendedor' ? req.user.id : (b.userId || 'all');
+    const numbers = db.waNumbers.filter(n => n.active && (owner === 'all' || n.userId === owner));
+    if (!numbers.length) return res.status(400).json({ error: 'Nenhum número de WhatsApp ativo para esse vendedor.' });
+    const dispatch = { id: uid(), templateId: template.id, createdBy: req.user.id, createdAt: new Date().toISOString(), userId: owner };
     let added = 0;
-    const reasons = {};
     for (const number of numbers) {
-      const ids = db.contacts
-        .filter(c => c.assignedTo === number.userId && c.status === 'novo' && !c.optOut && !templated.has(c.id) && !queued.has(c.id))
-        .sort((a, b2) => (a.createdAt || '').localeCompare(b2.createdAt || ''))
-        .slice(0, limit)
-        .map(c => c.id);
-      const result = queue.enqueue(db, { contactIds: ids, templateId: template.id, dispatchId: dispatch.id });
-      added += result.added;
-      for (const s of result.skipped) reasons[s.reason] = (reasons[s.reason] || 0) + 1;
+      const ids = candidates(db, number).slice(0, limit).map(c => c.id);
+      added += queue.enqueue(db, { contactIds: ids, templateId: template.id, dispatchId: dispatch.id }).added;
     }
-    Object.assign(dispatch, { added, skipped: reasons });
+    if (!added) return res.status(400).json({ error: 'Nenhum contato disponível: todos de "A prospectar" já receberam mensagem, estão na fila ou estão bloqueados (opt-out, fixo, sem opt-in).' });
+    dispatch.added = added;
     db.dispatches.push(dispatch);
     save();
     queue.tick();
@@ -269,11 +194,12 @@ function createRoutes({ getDb, save, uid, auth, canSee, queue, log }) {
     queue.tick();
     res.json({ retried: n });
   });
-  r.post('/queue/cancel', lead, (req, res) => {
+  r.post('/queue/cancel', auth(), (req, res) => {
     const db = getDb();
+    const owner = req.user.role === 'vendedor' ? req.user.id : req.body?.userId;
     let n = 0;
     for (const i of db.dispatchItems) {
-      if (i.status === 'pending' && (!req.body?.userId || i.userId === req.body.userId)) { Object.assign(i, { status: 'skipped', skipReason: 'cancelado', updatedAt: new Date().toISOString() }); n++; }
+      if (i.status === 'pending' && (!owner || i.userId === owner)) { Object.assign(i, { status: 'skipped', skipReason: 'cancelado', updatedAt: new Date().toISOString() }); n++; }
     }
     save();
     res.json({ cancelled: n });
@@ -332,7 +258,10 @@ function readTemplate(b = {}) {
   const category = String(b.category || 'MARKETING').toUpperCase();
   if (!['MARKETING', 'UTILITY', 'AUTHENTICATION'].includes(category)) return { error: 'Categoria inválida.' };
   const params = (Array.isArray(b.params) ? b.params : String(b.params || '').split(','))
-    .map(p => String(p).trim()).filter(Boolean);
+    .map(p => String(p).replace(/\s*=\s*/, '=').trim()).filter(Boolean);
+  const named = params.filter(p => p.includes('='));
+  if (named.length && named.length !== params.length) return { error: 'Use só variáveis nomeadas (nome=contact.name) ou só na ordem (contact.name), sem misturar.' };
+  if (named.some(p => !/^[a-z0-9_]+=\S+$/.test(p))) return { error: 'Variável nomeada inválida. Exemplo: nome=contact.name, vendedor=seller.name' };
   const language = String(b.language || 'pt_BR').trim();
   if (!/^[a-z]{2,3}(_[A-Z]{2})?$/.test(language)) return { error: 'Idioma inválido (ex.: pt_BR, en_US).' };
   return { name, language, category, params, body: String(b.body || '').slice(0, 1024) };

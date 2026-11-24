@@ -56,7 +56,10 @@ Números já cadastrados são ignorados (o mesmo número escrito com ou sem +55,
 
 ## WhatsApp (Cloud API oficial)
 
-O painel dispara o primeiro contato por template, numa fila com intervalo aleatório e teto diário por número. As respostas chegam pelo webhook e o vendedor conversa pelo próprio painel, com texto livre dentro da janela de 24h. A gestão acompanha envios, respostas, conversão, custo e a qualidade dos números.
+Cada vendedor escolhe quantas pessoas quer abordar e o painel envia a **primeira mensagem** (template aprovado) para os próximos contatos de "A prospectar", numa fila com intervalo aleatório e teto diário por número.
+- A conversa continua no WhatsApp da equipe, e as listas são movidas à mão.
+- O webhook só registra quem respondeu e quem pediu para sair (opt-out).
+- A gestão acompanha envios, respostas, conversão, custo e a qualidade dos números.
 
 Configuração, variáveis de ambiente (`.env.example`), webhook, testes e pendências manuais: [deploy/WHATSAPP.md](deploy/WHATSAPP.md).
 

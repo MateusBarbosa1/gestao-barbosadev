@@ -39,7 +39,7 @@ async function main() {
     });
     const sig = 'sha256=' + crypto.createHmac('sha256', process.env.WA_APP_SECRET).update(raw).digest('hex');
     const res = await fetch(`${url.replace(/\/$/, '')}/webhook/whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': sig }, body: raw });
-    console.log(`Painel respondeu ${res.status}${res.status === 200 ? ': abra "Conversas do WhatsApp".' : ''}`);
+    console.log(`Painel respondeu ${res.status}${res.status === 200 ? ': a resposta conta no relatório (e "SAIR" vira opt-out).' : ''}`);
   } else usage();
 }
 

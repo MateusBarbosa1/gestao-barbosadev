@@ -191,7 +191,7 @@ function canSee(user, contact) {
 // ---------- WhatsApp (fila de disparo e rotas /api/wa) ----------
 const waLog = (...args) => console.log('[whatsapp]', ...args);
 const waQueue = createQueue({ getDb: () => db, save, uid, conversationFor: webhook.conversationFor, phoneType, log: waLog });
-app.use('/api/wa', createRoutes({ getDb: () => db, save, uid, auth, canSee, queue: waQueue, log: waLog }));
+app.use('/api/wa', createRoutes({ getDb: () => db, save, uid, auth, queue: waQueue }));
 
 // ---------- Auth ----------
 app.post('/api/login', (req, res) => {

@@ -1,131 +1,57 @@
-// Barbosa Dev — telas do WhatsApp (conversas do vendedor e gestão).
-// Usa as funções globais de app.js: state, api, esc, toast, refresh, render, fmtDateTime,
-// fmtDate, userName, statusLabel, brl, kpi, $.
+// Barbosa Dev — telas do WhatsApp: disparo da primeira mensagem e gestão.
+// A conversa continua no WhatsApp da equipe; as listas são movidas à mão no painel.
+// Usa as funções globais de app.js: state, api, esc, toast, render, fmtDateTime,
+// fmtDate, userName, brl, kpi, periodText, $.
 
 const WA_DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const WA_QUALITY = { GREEN: ['green', 'Alta'], YELLOW: ['yellow', 'Média'], RED: ['red', 'Baixa'], UNKNOWN: ['', 'Desconhecida'] };
-const WA_TYPE = { audio: 'áudio', image: 'imagem', video: 'vídeo', document: 'documento', sticker: 'figurinha', location: 'localização', contacts: 'contato', reaction: 'reação' };
-const WA_TICKS = { queued: '🕓', sent: '✓', delivered: '✓✓', read: '✓✓', failed: '⚠' };
 const WA_PARAMS = { 'contact.name': 'nome do contato', 'contact.niche': 'nicho', 'contact.city': 'cidade', 'seller.name': 'nome do vendedor' };
-
-let waChat = null; // conversa aberta: { contactId, data }
 
 // ---------- Carregamento ----------
 async function waLoad() {
   const lead = state.user.role !== 'vendedor';
   const q = state.month ? `?month=${state.month}` : '';
   const get = p => api(p).catch(() => null); // WhatsApp fora do ar não pode travar o painel
-  const [config, conversations, stats, queue, numbers, templates, settings] = await Promise.all([
-    get('/wa/config'), get('/wa/conversations'),
+  const [config, stats, queue, numbers, templates, settings] = await Promise.all([
+    get('/wa/config'),
     lead ? get(`/wa/stats${q}`) : null, lead ? get('/wa/queue') : null,
     lead ? get('/wa/numbers') : null, lead ? get('/wa/templates') : null, lead ? get('/wa/settings') : null,
   ]);
-  state.wa = { config, conversations: conversations || [], stats, queue, numbers: numbers || [], templates: templates || [], settings };
+  state.wa = { config, stats, queue, numbers: numbers || [], templates: templates || [], settings };
 }
 
 async function waReload() { await waLoad(); render(); }
 
-// ---------- Vendedor: lista de conversas ----------
-function waConversationsCard() {
-  const wa = state.wa;
-  if (!wa?.config) return '';
-  const list = wa.conversations.filter(c => !state.vendorFilter || c.userId === state.vendorFilter);
-  const unread = list.reduce((n, c) => n + c.unread, 0);
-  const warn = !wa.config.configured ? 'O WhatsApp ainda não foi configurado no servidor.'
-    : wa.config.queuePaused ? (wa.config.pauseReason || 'A fila de envio está pausada.')
-    : state.user.role !== 'ceo' && !wa.config.myNumber ? 'Você ainda não tem um número de WhatsApp vinculado: peça ao CEO.' : '';
-  return `<section class="card" id="wa-conv">
-    <div class="section-head"><h2>Conversas do WhatsApp ${unread ? `<span class="badge green">${unread} nova(s)</span>` : ''}</h2>
-      <span class="sub">${wa.config.myNumber ? `Meu número: ${esc(wa.config.myNumber.displayPhone)}` : ''}</span></div>
+// ---------- Vendedor/gerente: primeira mensagem em quantidade ----------
+function waFirstMessageCard() {
+  const cfg = state.wa?.config;
+  if (!cfg?.myNumber) return '';
+  const q = cfg.myQueue;
+  const leftToday = Math.max(0, q.dailyCap - q.sentToday - q.pending);
+  const suggestion = Math.max(1, Math.min(q.available, leftToday || q.dailyCap));
+  const days = cfg.sendDays.map(d => WA_DAYS[d]).join(', ');
+  const warn = !cfg.configured ? 'O WhatsApp ainda não foi configurado no servidor.'
+    : cfg.queuePaused ? (cfg.pauseReason || 'Envios pausados pelo CEO.')
+    : !cfg.inWindow ? `Fora do horário de envio (${days}, ${cfg.sendHours.start}h às ${cfg.sendHours.end}h): o que você colocar na fila sai no próximo horário.` : '';
+  return `<section class="card" id="wa-first">
+    <div class="section-head"><h2>Enviar primeira mensagem pelo WhatsApp</h2><span class="sub">Número ${esc(cfg.myNumber.displayPhone || cfg.myNumber.phoneNumberId)}</span></div>
     ${warn ? `<p class="sub wa-warn">${esc(warn)}</p>` : ''}
-    ${list.length ? `<div class="wa-conv-list">${list.map(c => `
-      <button type="button" class="wa-conv ${c.unread ? 'unread' : ''}" data-wa-chat="${c.contactId}">
-        <span class="wa-conv-main"><span class="name">${esc(c.name)}</span>
-          <span class="sub">${c.lastDirection === 'out' ? 'Você: ' : ''}${esc(c.lastText)}</span></span>
-        <span class="wa-conv-meta"><span class="sub">${fmtDateTime(c.lastMessageAt)}</span>
-          <span>${c.optOut ? '<span class="badge">opt-out</span>' : c.windowOpen ? '<span class="badge green">janela aberta</span>' : ''}
-          ${state.user.role !== 'vendedor' ? `<span class="badge">${esc(userName(c.userId))}</span>` : ''}
-          ${c.unread ? `<b class="wa-unread">${c.unread}</b>` : ''}</span></span>
-      </button>`).join('')}</div>` : '<p class="empty">Ninguém respondeu ainda. As respostas aparecem aqui.</p>'}
+    <div class="kpis inner">
+      ${kpi('Enviadas hoje', `${q.sentToday} / ${q.dailyCap}`, 'teto do dia')}
+      ${kpi('Na fila', q.pending, q.pending ? 'saindo aos poucos' : 'nada esperando')}
+      ${kpi('Disponíveis', q.available, 'em "A prospectar", nunca receberam')}
+      ${q.failed ? kpi('Falharam', q.failed, 'o gerente pode reenviar') : ''}
+    </div>
+    <form class="wa-form wa-first-form" data-wa-form="first">
+      <input type="hidden" name="userId" value="${state.user.id}">
+      <label>Mensagem (template)<select name="templateId" required>${cfg.templates.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('') || '<option value="">Nenhum template cadastrado</option>'}</select></label>
+      <label>Quantas pessoas<input name="limit" type="number" min="1" max="${Math.max(1, q.available)}" value="${suggestion}" required></label>
+      <button class="btn primary" ${cfg.templates.length && q.available ? '' : 'disabled'}>Enviar</button>
+    </form>
+    <p class="sub">Vai para os próximos contatos de "A prospectar", um a cada ${cfg.minDelaySec}–${cfg.maxDelaySec} s. O que passar do teto de hoje sai no próximo dia de envio.
+      Cada contato que recebe passa para "Mensagem enviada"; a conversa continua no WhatsApp e as listas você move aqui no painel.</p>
+    ${q.pending ? `<div class="wa-actions"><button type="button" class="btn sm danger" data-wa-cancel>Cancelar os ${q.pending} que estão na fila</button></div>` : ''}
   </section>`;
-}
-
-// ---------- Conversa (histórico, template, texto, status) ----------
-async function openChat(contactId) {
-  waChat = { contactId, data: null };
-  try {
-    waChat.data = await api(`/wa/contacts/${contactId}/messages`);
-  } catch (err) { waChat = null; return toast(err.message); }
-  drawChat(true);
-}
-
-function closeChat() { waChat = null; $('#modal-root').innerHTML = ''; }
-
-function chatBody(d) {
-  if (!d.messages.length) return '<p class="empty">Nenhuma mensagem ainda.</p>';
-  return d.messages.map(m => `
-    <div class="bubble ${m.direction}">
-      ${m.type === 'template' ? `<div class="bubble-tag">Template ${esc(m.templateName)}</div>` : ''}
-      <div>${m.type === 'unsupported' ? `<em>[${esc(WA_TYPE[m.unsupportedType] || m.unsupportedType)} — não é exibido no painel]</em>` : esc(m.text || '').replace(/\n/g, '<br>')}</div>
-      <div class="bubble-meta">${fmtDateTime(m.createdAt)} ${m.direction === 'out' ? `<span class="tick ${m.status}" title="${esc(m.error || m.status)}">${WA_TICKS[m.status] || ''}</span>` : ''}</div>
-      ${m.error ? `<div class="bubble-error">${esc(m.error)}</div>` : ''}
-    </div>`).join('');
-}
-
-function drawChat(scroll) {
-  const d = waChat.data;
-  const c = d.contact;
-  const templates = state.wa?.config?.templates || [];
-  const canTemplate = !d.blockReason && !d.queued && templates.length;
-  const until = d.windowEndsAt ? new Date(d.windowEndsAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }) : '';
-  const canText = d.windowOpen && !c.optOut && d.number;
-  $('#modal-root').innerHTML = `<div class="modal-bg" data-wa-bg><div class="modal chat-modal">
-    <div class="chat-head">
-      <div><h3>${esc(c.name)}</h3>
-        <div class="sub">${esc(c.phone)} · ${d.number ? `pelo número ${esc(d.number.displayPhone)} (${esc(userName(d.number.userId))})` : 'sem número vinculado'} · origem ${esc(c.origin || '—')}</div></div>
-      <button type="button" class="btn sm" data-wa-close>Fechar</button>
-    </div>
-    <div class="chat-tools">
-      <label>Status <select data-wa-status>${state.statuses.map(s => `<option value="${s.id}" ${c.status === s.id ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>
-      <label class="follow-toggle"><input type="checkbox" data-wa-optin ${c.optIn ? 'checked' : ''} ${c.optOut ? 'disabled' : ''}> Cliente autorizou receber mensagens (opt-in)</label>
-    </div>
-    <div class="chat-body" id="chat-body">${chatBody(d)}</div>
-    <div class="chat-foot">
-      <div class="chat-template">
-        <select id="wa-template" ${canTemplate ? '' : 'disabled'}>${templates.map(t => `<option value="${t.id}">${esc(t.name)} (${t.category === 'UTILITY' ? 'utilidade' : t.category.toLowerCase()})</option>`).join('') || '<option>Nenhum template cadastrado</option>'}</select>
-        <button type="button" class="btn" data-wa-send-template ${canTemplate ? '' : 'disabled'}>Enviar template</button>
-      </div>
-      <p class="sub">${d.queued ? 'Template na fila de envio.' : d.blockReason ? `Template bloqueado: ${esc(d.blockReason)}.` : 'O template entra na fila do seu número (respeita o intervalo e o teto do dia).'}</p>
-      <form class="chat-text" data-wa-text>
-        <textarea name="text" rows="2" maxlength="4096" placeholder="${canText ? 'Escreva uma mensagem…' : c.optOut ? 'Contato em opt-out: envio bloqueado.' : !d.number ? 'Sem número de WhatsApp vinculado.' : 'Fora da janela de 24h: só é possível enviar template.'}" ${canText ? '' : 'disabled'}></textarea>
-        <button class="btn primary" ${canText ? '' : 'disabled'}>Enviar</button>
-      </form>
-      <p class="sub">${c.optOut ? 'Este contato pediu para não receber mensagens.' : d.windowOpen ? `Janela de 24h aberta até ${until}: texto livre liberado, sem cobrança de template.` : 'A janela abre quando o cliente responde.'}</p>
-    </div>
-  </div></div>`;
-  if (scroll) { const b = $('#chat-body'); b.scrollTop = b.scrollHeight; }
-}
-
-// Atualiza só o histórico (não apaga o que o vendedor está digitando).
-async function pollChat() {
-  if (!waChat) return;
-  const id = waChat.contactId;
-  const d = await api(`/wa/contacts/${id}/messages`).catch(() => null);
-  if (!d || !waChat || waChat.contactId !== id) return;
-  const before = JSON.stringify(waChat.data.messages);
-  const windowChanged = d.windowOpen !== waChat.data.windowOpen || d.queued !== waChat.data.queued;
-  waChat.data = d;
-  if (windowChanged) {
-    const draft = $('#modal-root [name=text]')?.value || '';
-    drawChat(true);
-    const t = $('#modal-root [name=text]');
-    if (t && !t.disabled) t.value = draft;
-  } else if (JSON.stringify(d.messages) !== before) {
-    const b = $('#chat-body');
-    const atEnd = b.scrollTop + b.clientHeight >= b.scrollHeight - 30;
-    b.innerHTML = chatBody(d);
-    if (atEnd) b.scrollTop = b.scrollHeight;
-  }
 }
 
 // ---------- Gestão ----------
@@ -233,7 +159,10 @@ function waTemplatesCard(templates) {
     <div class="section-head"><h2>Templates aprovados</h2></div>
     <div class="list">${templates.map(t => `<div class="list-item"><span><span class="name">${esc(t.name)}</span>
       <span class="sub">· ${t.language} · ${t.category === 'UTILITY' ? 'utilidade' : t.category.toLowerCase()} ${t.active ? '' : '· desativado'}</span>
-      <div class="sub">${t.params.length ? `Variáveis: ${t.params.map((p, i) => `{{${i + 1}}} = ${esc(WA_PARAMS[p] || p)}`).join(', ')}` : 'Sem variáveis'}</div></span>
+      <div class="sub">${t.params.length ? `Variáveis: ${t.params.map((p, i) => {
+        const [name, source] = p.includes('=') ? p.split('=') : [String(i + 1), p];
+        return `{{${esc(name)}}} = ${esc(WA_PARAMS[source] || source)}`;
+      }).join(', ')}` : 'Sem variáveis'}</div></span>
       <button type="button" class="btn sm ${t.active ? 'danger' : ''}" data-wa-tpl-active="${t.id}" data-active="${!t.active}">${t.active ? 'Desativar' : 'Ativar'}</button></div>`).join('') || '<p class="empty">Nenhum template cadastrado.</p>'}</div>
     <form class="wa-form" data-wa-form="template">
       <h3 class="mini">Cadastrar template (o mesmo nome aprovado na Meta)</h3>
@@ -242,9 +171,11 @@ function waTemplatesCard(templates) {
         <label>Categoria<select name="category"><option value="MARKETING">Marketing</option><option value="UTILITY">Utilidade</option></select></label>
         <label>Idioma<input name="language" value="pt_BR" required></label>
       </div>
-      <label>Variáveis, na ordem ({{1}}, {{2}}…)<input name="params" value="contact.name, seller.name"></label>
-      <p class="sub">Use: contact.name (nome do contato), contact.niche (nicho), contact.city (cidade), seller.name (nome do vendedor).</p>
-      <label>Texto do template (só para o histórico)<textarea name="body" rows="3" placeholder="Olá {{1}}, aqui é {{2}} da Barbosa Dev…"></textarea></label>
+      <label>Variáveis<input name="params" value="nome=contact.name, vendedor=seller.name"></label>
+      <p class="sub">Template com variáveis nomeadas ({{nome}}, {{vendedor}}): escreva <b>nome_da_variável=valor</b>, ex.: <code>nome=contact.name, vendedor=seller.name</code>.
+        Template numerado ({{1}}, {{2}}): só os valores, na ordem, ex.: <code>contact.name, seller.name</code>. Sem variáveis: deixe vazio.<br>
+        Valores: contact.name (nome do contato), contact.niche (nicho), contact.city (cidade), seller.name (primeiro nome do vendedor).</p>
+      <label>Texto do template (só para o histórico)<textarea name="body" rows="3" placeholder="Olá, {{nome}}! Tudo bem? …"></textarea></label>
       <button class="btn primary">Cadastrar</button>
     </form>
   </section>`;
@@ -281,18 +212,9 @@ function waSettingsCard(s) {
 
 // ---------- Eventos (delegados: os cards são redesenhados a cada render) ----------
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-wa-chat], [data-wa-close], [data-wa-bg], [data-wa-send-template], [data-wa-quality], [data-wa-retry], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
+  const el = e.target.closest('[data-wa-quality], [data-wa-retry], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
   if (!el) return;
-  if (el.matches('[data-wa-bg]') && e.target !== el) return; // clique dentro da janela
   try {
-    if (el.dataset.waChat) return await openChat(el.dataset.waChat);
-    if (el.matches('[data-wa-close], [data-wa-bg]')) { closeChat(); return waReload(); }
-    if (el.matches('[data-wa-send-template]')) {
-      el.disabled = true;
-      await api(`/wa/contacts/${waChat.contactId}/template`, { method: 'POST', body: { templateId: $('#wa-template').value } });
-      toast('Template colocado na fila de envio');
-      return pollChat();
-    }
     if (el.dataset.waQuality) {
       el.disabled = true;
       const n = await api(`/wa/numbers/${el.dataset.waQuality}/quality`, { method: 'POST' });
@@ -335,50 +257,21 @@ document.addEventListener('click', async e => {
   }
 });
 
-document.addEventListener('change', async e => {
-  if (!waChat) return;
-  const c = waChat.data.contact;
-  try {
-    if (e.target.matches('[data-wa-status]')) {
-      await api(`/contacts/${c.id}`, { method: 'PATCH', body: { status: e.target.value } });
-      toast(`Status: ${statusLabel(e.target.value)}`);
-    } else if (e.target.matches('[data-wa-optin]')) {
-      await api(`/contacts/${c.id}`, { method: 'PATCH', body: { optIn: e.target.checked } });
-      toast(e.target.checked ? 'Opt-in registrado' : 'Opt-in removido');
-    } else return;
-    waChat.data = await api(`/wa/contacts/${c.id}/messages`);
-    drawChat(false);
-  } catch (err) {
-    toast(err.message);
-    drawChat(false);
-  }
-});
-
 document.addEventListener('submit', async e => {
   const form = e.target;
-  if (form.matches('[data-wa-text]')) {
-    e.preventDefault();
-    const btn = form.querySelector('button');
-    const text = form.text.value.trim();
-    if (!text) return;
-    btn.disabled = true;
-    try {
-      await api(`/wa/contacts/${waChat.contactId}/text`, { method: 'POST', body: { text } });
-      form.text.value = '';
-      await pollChat();
-    } catch (err) { toast(err.message); }
-    btn.disabled = false;
-    return;
-  }
   const kind = form.dataset.waForm;
   if (!kind) return;
   e.preventDefault();
   const f = new FormData(form);
+  const btn = form.querySelector('button.primary');
+  if (btn) btn.disabled = true;
   try {
-    if (kind === 'dispatch') {
-      const r = await api('/wa/dispatches', { method: 'POST', body: { templateId: f.get('templateId'), userId: f.get('userId'), limit: Number(f.get('limit')) } });
-      const skipped = Object.entries(r.skipped || {}).map(([why, n]) => `${n} ${why}`).join(', ');
-      toast(`${r.added} contato(s) na fila${skipped ? ` · fora: ${skipped}` : ''}`);
+    if (kind === 'first' || kind === 'dispatch') {
+      const r = await api('/wa/dispatches', { method: 'POST', body: { templateId: f.get('templateId'), userId: f.get('userId') || undefined, limit: Number(f.get('limit')) } });
+      toast(`${r.added} pessoa(s) na fila de envio`);
+      // A fila muda as listas conforme envia: atualiza o painel inteiro.
+      await refresh();
+      return;
     } else if (kind === 'number') {
       await api('/wa/numbers', { method: 'POST', body: { phoneNumberId: f.get('phoneNumberId'), displayPhone: f.get('displayPhone'), userId: f.get('userId'), dailyCap: Number(f.get('dailyCap')) } });
       toast('Número cadastrado');
@@ -388,7 +281,7 @@ document.addEventListener('submit', async e => {
     } else if (kind === 'settings') {
       const allow = f.get('allowWithoutOptIn') === 'on';
       if (allow && !state.wa.settings.allowWithoutOptIn
-        && !confirm('Enviar para quem não autorizou viola a política do WhatsApp e pode levar ao bloqueio do número. Continuar?')) return;
+        && !confirm('Enviar para quem não autorizou viola a política do WhatsApp e pode levar ao bloqueio do número. Continuar?')) { btn.disabled = false; return; }
       await api('/wa/settings', {
         method: 'PUT', body: {
           costs: { MARKETING: f.get('MARKETING'), UTILITY: f.get('UTILITY'), AUTHENTICATION: f.get('AUTHENTICATION') },
@@ -402,16 +295,8 @@ document.addEventListener('submit', async e => {
       toast('Configurações salvas');
     }
     await waReload();
-  } catch (err) { toast(err.message); }
+  } catch (err) {
+    toast(err.message);
+    if (btn) btn.disabled = false;
+  }
 });
-
-// Atualiza conversas (e a conversa aberta) sem redesenhar a página inteira.
-setInterval(async () => {
-  if (!state.user || document.visibilityState !== 'visible') return;
-  if (waChat) return pollChat();
-  const list = await api('/wa/conversations').catch(() => null);
-  if (!list || !state.wa) return;
-  state.wa.conversations = list;
-  const card = $('#wa-conv');
-  if (card) card.outerHTML = waConversationsCard();
-}, 20_000);

@@ -5,7 +5,7 @@
 // Variáveis de ambiente: WA_VERIFY_TOKEN, WA_APP_SECRET.
 const express = require('express');
 const crypto = require('crypto');
-const { waKey, toE164 } = require('./schema');
+const { waKey } = require('./schema');
 
 const STATUS_RANK = { queued: 0, sent: 1, delivered: 2, read: 3 };
 const EVENT_TTL_DAYS = 30;
@@ -85,8 +85,7 @@ function createWebhook({ getDb, save, uid }) {
         const phoneNumberId = value.metadata?.phone_number_id;
         const number = db.waNumbers.find(n => n.phoneNumberId === phoneNumberId);
         if (!number) { log(`evento de número não cadastrado (${phoneNumberId}): ignorado`); continue; }
-        const profiles = new Map((value.contacts || []).map(c => [c.wa_id, c.profile?.name]));
-        for (const msg of value.messages || []) changed = handleInbound(db, number, msg, profiles.get(msg.from)) || changed;
+        for (const msg of value.messages || []) changed = handleInbound(db, number, msg) || changed;
         for (const st of value.statuses || []) changed = handleStatus(db, st) || changed;
         for (const err of value.errors || []) log(`erro da Meta ${err.code}: ${err.title}`);
       }
@@ -94,47 +93,30 @@ function createWebhook({ getDb, save, uid }) {
     if (changed) { pruneEvents(db); save(); }
   }
 
-  // Mensagem do cliente: registra, abre a janela de 24h, detecta opt-out e avança o status.
-  function handleInbound(db, number, msg, profileName) {
+  // Mensagem do cliente. A conversa acontece no WhatsApp e a equipe move as listas à mão, então aqui só:
+  // - registra QUE o contato respondeu (sem guardar o texto), para a taxa de resposta;
+  // - marca opt-out se ele pediu para sair, bloqueando novos disparos.
+  // Números que não estão na base (conversas pessoais, indicações) são ignorados.
+  function handleInbound(db, number, msg) {
     if (!msg.id || db.messages.some(m => m.waMessageId === msg.id)) return false; // reenvio da Meta
-    const at = msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : new Date().toISOString();
     const key = waKey(msg.from);
-    let contact = db.contacts.find(c => waKey(c.phoneE164 || c.phone) === key);
-    if (!contact) {
-      // Quem chama a empresa primeiro vira contato novo do vendedor dono do número.
-      contact = {
-        id: uid(), name: profileName || `WhatsApp ${mask(msg.from)}`, niche: '', phone: msg.from, site: '', maps: '',
-        address: '', city: '', assignedTo: number.userId, status: 'respondidos', messaged: true, messagedAt: at,
-        meetingAt: null, meetingDate: null, sold: false, saleValue: 0, soldAt: null, soldBy: null, notes: '',
-        importId: null, createdAt: at, createdBy: null, phoneE164: toE164(msg.from), origin: 'whatsapp_inbound',
-        optIn: true, optInAt: at, optInSource: 'mensagem do cliente', optOut: false, optOutAt: null,
-        waPhoneNumberId: number.phoneNumberId, lastInboundAt: null,
-      };
-      db.contacts.push(contact);
-      log(`novo contato pelo WhatsApp ${mask(msg.from)}`);
-    }
-
-    // Tipos com texto aproveitável; o resto (áudio, imagem, figurinha…) fica registrado só com o tipo.
-    let type = 'text';
-    let text = null;
-    if (msg.type === 'text') text = msg.text?.body ?? '';
-    else if (msg.type === 'button') text = msg.button?.text ?? '';
-    else if (msg.type === 'interactive') text = msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title || '';
-    else type = 'unsupported';
+    const contact = db.contacts.find(c => waKey(c.phoneE164 || c.phone) === key);
+    if (!contact) return false;
+    const at = msg.timestamp ? new Date(Number(msg.timestamp) * 1000).toISOString() : new Date().toISOString();
+    const text = msg.type === 'text' ? msg.text?.body : msg.type === 'button' ? msg.button?.text
+      : msg.type === 'interactive' ? (msg.interactive?.button_reply?.title || msg.interactive?.list_reply?.title) : null;
 
     const conv = conversationFor(db, contact, number);
     db.messages.push({
       id: uid(), waMessageId: msg.id, conversationId: conv.id, contactId: contact.id,
-      phoneNumberId: number.phoneNumberId, userId: conv.userId, direction: 'in', type,
-      templateName: null, text, unsupportedType: type === 'unsupported' ? msg.type : null,
-      status: 'received', statusAt: {}, error: null, pricing: null, createdAt: at,
+      phoneNumberId: number.phoneNumberId, userId: conv.userId, direction: 'in', type: msg.type || 'unknown',
+      templateName: null, text: null, status: 'received', statusAt: {}, error: null, pricing: null, createdAt: at,
     });
     conv.lastInboundAt = at;
     conv.lastMessageAt = at;
-    conv.unread = (conv.unread || 0) + 1;
     if (!contact.lastInboundAt || at > contact.lastInboundAt) contact.lastInboundAt = at;
 
-    if (text && isOptOut(text, db.settings.whatsapp.optOutKeywords)) {
+    if (text && !contact.optOut && isOptOut(text, db.settings.whatsapp.optOutKeywords)) {
       contact.optOut = true;
       contact.optOutAt = at;
       contact.status = 'opt_out';
@@ -143,9 +125,6 @@ function createWebhook({ getDb, save, uid }) {
         if (item.contactId === contact.id && item.status === 'pending') Object.assign(item, { status: 'skipped', skipReason: 'opt_out', updatedAt: at });
       }
       log(`opt-out registrado ${mask(msg.from)}`);
-    } else if (!contact.optOut && ['novo', 'mensagem_enviada'].includes(contact.status)) {
-      contact.status = 'respondidos';
-      if (!contact.messaged) { contact.messaged = true; contact.messagedAt = at; }
     }
     return true;
   }
@@ -179,7 +158,7 @@ function createWebhook({ getDb, save, uid }) {
     if (!conv) {
       conv = {
         id: uid(), contactId: contact.id, phoneNumberId: number.phoneNumberId, userId: number.userId,
-        lastInboundAt: null, lastOutboundAt: null, lastMessageAt: null, unread: 0,
+        lastInboundAt: null, lastOutboundAt: null, lastMessageAt: null,
       };
       db.conversations.push(conv);
     }

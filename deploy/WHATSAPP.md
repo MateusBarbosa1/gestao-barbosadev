@@ -1,19 +1,28 @@
 # Integração com o WhatsApp (Cloud API oficial da Meta)
 
-O painel envia o primeiro contato por **template aprovado**, recebe as respostas pelo **webhook**,
-mostra as conversas para cada vendedor e dá à gestão os números de envio, resposta, conversão,
-custo e qualidade dos números.
+O painel faz só o **primeiro contato**: cada vendedor escolhe quantas pessoas quer abordar e a
+fila envia um **template aprovado** para os próximos contatos de "A prospectar".
+- **A conversa continua no WhatsApp da equipe.** O número precisa estar no WhatsApp Business app e na API ao mesmo tempo (coexistência).
+- **As listas** (Respondidos, Interessou no exemplo…) **são movidas à mão** no painel, como sempre.
+- O **webhook** registra apenas se a pessoa respondeu (para a taxa de resposta, sem guardar o texto), o **opt-out** e os status de entrega.
+- A gestão acompanha envios, respostas, conversão, custo e qualidade dos números.
 
 ## Como funciona
 
 | Parte | Arquivo | O que faz |
 |---|---|---|
 | Esquema | `whatsapp/schema.js` | Coleções novas no banco: números, conversas, mensagens, templates, disparos e fila |
-| Webhook | `whatsapp/webhook.js` | `GET/POST /webhook/whatsapp`: verificação da Meta, assinatura `X-Hub-Signature-256`, mensagens recebidas, opt-out e status de entrega |
+| Webhook | `whatsapp/webhook.js` | `GET/POST /webhook/whatsapp`: verificação da Meta, assinatura `X-Hub-Signature-256`, respostas, opt-out e status de entrega |
 | Fila | `whatsapp/queue.js` | Disparo dos templates com intervalo aleatório, teto diário por número e horário de envio |
-| API da Meta | `whatsapp/api.js` | Envio de template e texto, consulta da nota de qualidade |
-| Rotas do painel | `whatsapp/routes.js` | `/api/wa/*`: conversas, envio, números, templates, configurações, relatório |
-| Telas | `public/whatsapp.js` | Conversas do vendedor e cartões de gestão do CEO/gerente |
+| API da Meta | `whatsapp/api.js` | Envio de template e consulta da nota de qualidade |
+| Rotas do painel | `whatsapp/routes.js` | `/api/wa/*`: disparo, números, templates, configurações, relatório |
+| Telas | `public/whatsapp.js` | Cartão "Enviar primeira mensagem" do vendedor/gerente e cartões de gestão do CEO/gerente |
+
+### No dia a dia
+1. O vendedor abre o painel, vai em **Enviar primeira mensagem pelo WhatsApp**, escolhe o template e quantas pessoas, e clica em **Enviar**.
+2. A fila manda uma mensagem a cada intervalo, sem passar do teto do dia. Cada contato que recebe vai sozinho para **Mensagem enviada**.
+3. Quem responde aparece no WhatsApp do vendedor. Ele conversa por lá e move o contato de lista no painel.
+4. O cartão mostra quantas mensagens já saíram hoje, quantas estão na fila e quantos contatos ainda estão disponíveis. Dá para cancelar o que ainda está na fila.
 
 ### Regras
 - **Fila:** cada número envia um template, espera um intervalo aleatório (padrão 20–90 s) e envia o próximo.
@@ -23,15 +32,13 @@ custo e qualidade dos números.
 - **Um número por contato:** no primeiro envio, o contato fica preso ao número que o atendeu. Ele nunca sai por outro número.
   - Se for passado para outro vendedor, o painel avisa "vinculado ao número de outro vendedor".
   - O mesmo telefone cadastrado duas vezes também é barrado.
-- **Janela de 24h:** cada mensagem do cliente abre a janela.
-  - Dentro dela, o vendedor escreve texto livre, e essas respostas não geram cobrança de template.
-  - Fora dela, só template.
+- **Só a primeira mensagem:** um contato recebe template uma vez. Quem já recebeu não entra em um novo disparo.
 - **Opt-out:** se o cliente responder SAIR, PARAR, "não quero…" ou outra palavra da lista (editável), o contato vai para **Opt-out**.
   - A partir daí, nada mais é enviado e o que estava na fila é cancelado.
   - Só o CEO tira um contato do opt-out.
 - **Opt-in:** cada contato guarda a origem (`google_maps`, `csv`, `formulario`…) e se autorizou receber mensagens.
   - Por padrão, **só quem tem opt-in recebe template**.
-  - O vendedor pode marcar o opt-in na conversa, e fica registrado quem marcou e quando.
+  - O vendedor pode marcar o opt-in em **Detalhes** do contato, e fica registrado quem marcou e quando.
   - O CEO pode ligar "Permitir envio para contatos sem opt-in" (veja os riscos abaixo).
 - **Falhas:**
   - **Temporárias** (limite da Meta, instabilidade): o envio volta para a fila sozinho, até 3 vezes.
@@ -94,15 +101,16 @@ Sem a Meta (só o painel):
 ```bash
 node --env-file=.env scripts/testar-whatsapp.js webhook http://localhost:3000 PHONE_NUMBER_ID 5581999999999 "Oi, tenho interesse"
 ```
-A conversa aparece em **Conversas do WhatsApp**. Antes, cadastre o número no painel com esse PHONE_NUMBER_ID.
+A resposta conta na taxa de resposta do cartão "WhatsApp — resultados", e um "SAIR" manda o contato para Opt-out. Antes, cadastre o número no painel com esse PHONE_NUMBER_ID e tenha um contato com esse telefone.
 
 Com a Meta (envio de verdade):
 1. Siga os passos 1 a 5 acima, usando o número de teste.
 2. No painel, cadastre o template `hello_world`, idioma `en_US`, sem variáveis. Ele já vem aprovado no número de teste.
-3. Cadastre (ou importe) um contato com o celular de teste, marque **opt-in** e clique em **Conversa → Enviar template**.
+3. Cadastre (ou importe) um contato com o celular de teste, em "A prospectar", com **opt-in**, e passe ele para o dono do número.
+4. Entre como esse vendedor, vá em **Enviar primeira mensagem**, escolha `hello_world` e quantidade 1.
    - Se preferir sem o painel: `node --env-file=.env scripts/testar-whatsapp.js enviar PHONE_NUMBER_ID 5581999999999`
-4. Responda do celular. A resposta aparece no painel, a janela de 24h abre e você consegue responder por texto.
-5. Responda "SAIR" e veja o contato ir para Opt-out.
+5. A mensagem chega no celular e o contato vai para **Mensagem enviada**.
+6. Responda "SAIR" do celular e veja o contato ir para Opt-out.
 
 ## Custos (cartão "WhatsApp — resultados")
 - **Custo estimado:** templates **entregues** × valor da categoria, editável em Configurações. Referência para o Brasil: marketing ≈ R$ 0,3217 e utilidade ≈ R$ 0,035.
@@ -113,7 +121,8 @@ Com a Meta (envio de verdade):
 ## LGPD
 - O painel guarda só o necessário:
   - nome, telefone, origem e consentimento;
-  - o texto das mensagens (áudio, imagem etc. ficam registrados só pelo tipo; o arquivo não é baixado).
+  - o template enviado e o fato de a pessoa ter respondido. **O que o cliente escreve não é guardado**, porque a conversa fica no WhatsApp.
+  - conversas com números que não estão na base são ignoradas.
 - Os logs do servidor mostram só os 4 últimos dígitos do telefone.
 - **Excluir** um contato (gerente/CEO → Detalhes → Excluir) apaga também as mensagens, a conversa e a fila dele.
 - **Atenção:** com os dados no GitHub, versões antigas do `db.json` continuam no histórico do repositório `barbosadev-dados`. Para apagar de vez a pedido de alguém:
@@ -140,6 +149,5 @@ Com a Meta (envio de verdade):
 | "evento de número não cadastrado" nos logs | Phone Number ID não cadastrado em **Números de WhatsApp** |
 | Erro 131030 | Número de teste: o destinatário não está na lista de "Para" |
 | Erro 132001 | Template com nome ou idioma diferente do aprovado |
-| Erro 131047 | Texto livre fora da janela de 24h |
 | Erro 131049 | A Meta segurou a mensagem de marketing (excesso de mensagens para a pessoa ou baixo engajamento) |
 | Fila pausada "token" | `WA_TOKEN` vencido ou sem permissão: gere outro, salve no Render e clique em **Retomar fila** |

@@ -126,7 +126,11 @@ function createQueue({ getDb, save, uid, conversationFor, phoneType, log }) {
       return false;
     }
     const seller = db.users.find(u => u.id === number.userId);
-    const params = (template.params || []).map(p => paramValue(p, contact, seller));
+    // "nome=contact.name" vira variável nomeada {{nome}}; "contact.name" sozinho é posicional ({{1}}…).
+    const params = (template.params || []).map(p => {
+      const [name, source] = p.includes('=') ? p.split('=').map(s => s.trim()) : [null, p];
+      return { name, text: paramValue(source, contact, seller) };
+    });
     Object.assign(item, { status: 'sending', attempts: item.attempts + 1, updatedAt: now() });
     try {
       const wamid = await api.sendTemplate(number.phoneNumberId, contact.phoneE164, template, params);
@@ -216,7 +220,7 @@ function paramValue(param, contact, seller) {
 // Texto aproximado do que foi enviado, para o histórico (o corpo real fica na Meta).
 function renderTemplate(template, params) {
   const body = template.body || `[template ${template.name}]`;
-  return body.replace(/\{\{(\d+)\}\}/g, (m, i) => params[Number(i) - 1] ?? m);
+  return body.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, key) => (/^\d+$/.test(key) ? params[Number(key) - 1] : params.find(p => p.name === key))?.text ?? m);
 }
 
 module.exports = { createQueue, brDate };
