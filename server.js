@@ -655,11 +655,12 @@ const mapsSearch = (...parts) => {
 function parseSheet(buffer, filename = '') {
   let rows;
   try {
-    // CSV pode vir em UTF-8 ou em Windows-1252 (padrão do Excel no Windows).
+    // CSV pode vir em UTF-8 ou em Windows-1252 (padrão do Excel no Windows). Tenta UTF-8 estrito:
+    // se algum byte não for UTF-8 válido, o arquivo é Windows-1252 (acentos, “aspas”, – e € certos).
     let wb;
     if (/\.csv$/i.test(filename)) {
-      let text = buffer.toString('utf8');
-      if (text.includes('�')) text = buffer.toString('latin1');
+      let text;
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { text = new TextDecoder('windows-1252').decode(buffer); }
       wb = XLSX.read(text.replace(/^﻿/, ''), { type: 'string' });
     } else {
       wb = XLSX.read(buffer, { type: 'buffer' });
@@ -682,7 +683,8 @@ function parseSheet(buffer, filename = '') {
   const sellers = db.users.filter(u => u.active && u.role !== 'ceo');
   const items = rows.map(row => {
     const data = { name: '', niche: '', phone: '', site: '', maps: '', address: '', city: '', seller: '', origin: '', optIn: '' };
-    for (const [h, f] of Object.entries(mapping)) data[f] = String(row[h] ?? '').trim();
+    // NFC: acento sempre como um caractere só (é, ã), do jeito que o WhatsApp exibe certo.
+    for (const [h, f] of Object.entries(mapping)) data[f] = String(row[h] ?? '').normalize('NFC').trim();
     // O extrator do Google Maps não traz o link do local: monta uma busca pelo nome + endereço.
     if (!data.maps) data.maps = mapsSearch(data.name, data.address || data.city);
     data.origin = norm(data.origin).replace(/\s+/g, '_') || defaultOrigin;

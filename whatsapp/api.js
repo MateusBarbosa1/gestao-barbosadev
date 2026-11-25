@@ -53,7 +53,9 @@ async function sendTemplate(phoneNumberId, to, template, params = []) {
       type: 'body',
       parameters: params.map(p => {
         const { name, text } = typeof p === 'object' && p ? p : { name: null, text: p };
-        return { type: 'text', ...(name ? { parameter_name: name } : {}), text: String(text || '-').slice(0, 1000) };
+        // NFC garante o acento num caractere só; Array.from corta sem partir acento ou emoji ao meio.
+        const value = Array.from(String(text || '-').normalize('NFC')).slice(0, 1000).join('');
+        return { type: 'text', ...(name ? { parameter_name: name } : {}), text: value };
       }),
     }]
     : [];
