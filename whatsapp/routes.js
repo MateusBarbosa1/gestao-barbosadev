@@ -174,6 +174,22 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
     res.json(dispatch);
   });
 
+  // Apaga um disparo do histórico. Só quando nada dele está aguardando ou saindo.
+  // As mensagens já enviadas continuam no contato e no relatório; falhas continuam em "Últimas falhas".
+  r.delete('/dispatches/:id', lead, (req, res) => {
+    const db = getDb();
+    const dispatch = db.dispatches.find(d => d.id === req.params.id);
+    if (!dispatch) return res.status(404).json({ error: 'Disparo não encontrado.' });
+    const items = db.dispatchItems.filter(i => i.dispatchId === dispatch.id);
+    if (items.some(i => ['held', 'pending', 'sending'].includes(i.status))) {
+      return res.status(400).json({ error: 'Esse disparo ainda tem mensagens na fila. Dispare ou tire da fila antes de apagar.' });
+    }
+    db.dispatches = db.dispatches.filter(d => d.id !== dispatch.id);
+    db.dispatchItems = db.dispatchItems.filter(i => i.dispatchId !== dispatch.id || i.status === 'failed');
+    save();
+    res.json({ ok: true });
+  });
+
   r.get('/queue', lead, (req, res) => {
     const db = getDb();
     const name = id => db.contacts.find(c => c.id === id)?.name || '(apagado)';

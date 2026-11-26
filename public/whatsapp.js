@@ -106,7 +106,7 @@ function waQueueCard(q, templates, numbers, isCeo) {
     <div class="section-head"><h2>Fila de disparo</h2><span class="badge ${status[0]}">${status[1]}</span></div>
     ${q.pauseReason ? `<p class="sub wa-warn">${esc(q.pauseReason)}</p>` : ''}
     <div class="list">${q.numbers.map(n => `<div class="list-item"><span><span class="name">${esc(userName(n.userId))}</span>
-      <span class="sub">· hoje ${n.sentToday}/${n.dailyCap}${n.held ? ` · aguardando disparo ${n.held}` : ''} · saindo ${n.pending}${n.failed ? ` · ${n.failed} falha(s)` : ''}</span></span>
+      <span class="sub">· enviadas hoje ${n.sentToday} de ${n.dailyCap}${n.held ? ` · aguardando disparo ${n.held}` : ''}${n.pending ? ` · saindo ${n.pending}` : ''}${n.failed ? ` · ${n.failed} falha(s)` : ''}</span></span>
       <span class="row-actions">${goalMeterSmall(n.sentToday, n.dailyCap)}
       ${n.held ? `<button type="button" class="btn sm primary" data-wa-release data-user="${n.userId}" data-label="${n.held} mensagem(ns) de ${esc(userName(n.userId))}">Disparar</button>` : ''}
       ${n.held + n.pending ? `<button type="button" class="btn sm danger" data-wa-cancel data-user="${n.userId}" data-label="os ${n.held + n.pending} envios na fila de ${esc(userName(n.userId))}">Tirar da fila</button>` : ''}</span></div>`).join('') || '<p class="empty">Cadastre um número para começar.</p>'}</div>
@@ -114,7 +114,8 @@ function waQueueCard(q, templates, numbers, isCeo) {
       <div class="list-item"><span><span class="name">${esc(d.templateName)}</span>
         <span class="sub">· ${d.userId === 'all' ? 'todos os números' : esc(userName(d.userId))} · ${fmtDateTime(d.createdAt)} · ${d.added} contato(s): ${d.sent} enviado(s)${d.held ? `, ${d.held} aguardando disparo` : ''}${d.pending ? `, ${d.pending} saindo` : ''}${d.cancelled ? `, ${d.cancelled} tirado(s)` : ''}</span></span>
         <span class="row-actions">${d.held ? `<button type="button" class="btn sm primary" data-wa-release data-dispatch="${d.id}" data-label="${d.held} mensagem(ns) desse disparo">Disparar mensagens</button>` : ''}
-        ${d.held + d.pending ? `<button type="button" class="btn sm danger" data-wa-cancel data-dispatch="${d.id}" data-label="os ${d.held + d.pending} envios que ainda estão na fila desse disparo">Tirar da fila</button>` : ''}</span></div>`).join('')}</div>` : ''}
+        ${d.held + d.pending ? `<button type="button" class="btn sm danger" data-wa-cancel data-dispatch="${d.id}" data-label="os ${d.held + d.pending} envios que ainda estão na fila desse disparo">Tirar da fila</button>`
+          : `<button type="button" class="btn sm" data-wa-del-dispatch="${d.id}">Apagar</button>`}</span></div>`).join('')}</div>` : ''}
     <form class="wa-form" data-wa-form="dispatch">
       <h3 class="mini">Novo disparo (contatos "A prospectar" que ainda não receberam template)</h3>
       <p class="sub">Fica aguardando na fila até alguém apertar "Disparar mensagens".</p>
@@ -226,7 +227,7 @@ function waSettingsCard(s) {
 
 // ---------- Eventos (delegados: os cards são redesenhados a cada render) ----------
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-wa-quality], [data-wa-retry], [data-wa-release], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
+  const el = e.target.closest('[data-wa-quality], [data-wa-retry], [data-wa-release], [data-wa-del-dispatch], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
   if (!el) return;
   try {
     if (el.dataset.waQuality) {
@@ -238,6 +239,13 @@ document.addEventListener('click', async e => {
     if (el.matches('[data-wa-retry]')) {
       const r = await api('/wa/queue/retry', { method: 'POST', body: {} });
       toast(`${r.retried} envio(s) voltaram para a fila`);
+      return waReload();
+    }
+    if (el.dataset.waDelDispatch) {
+      if (!confirm('Apagar esse disparo do histórico? As mensagens que já saíram continuam nos contatos e no relatório.')) return;
+      el.disabled = true;
+      await api(`/wa/dispatches/${el.dataset.waDelDispatch}`, { method: 'DELETE' });
+      toast('Disparo apagado do histórico');
       return waReload();
     }
     if (el.matches('[data-wa-release]')) {
