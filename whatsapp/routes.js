@@ -266,14 +266,11 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
     const perUser = sellers.map(u => {
       const mine = templates.filter(m => m.userId === u.id);
       const reached = [...new Set(mine.map(m => m.contactId))];
-      const firstSent = new Map();
-      for (const m of mine) if (!firstSent.has(m.contactId)) firstSent.set(m.contactId, m.createdAt);
-      // Respondeu: a resposta chegou pelo webhook OU a equipe moveu o contato para "Respondidos" ou além
-      // (a conversa acontece no app do WhatsApp, então a lista do contato também vale).
+      // Respondeu = a equipe moveu o contato para "Respondidos" ou uma lista depois dela (ou vendeu).
+      // A conversa acontece no app do WhatsApp, então vale só a lista do contato, não o webhook.
       const replied = reached.filter(id => {
         const c = db.contacts.find(x => x.id === id);
-        return (c && (REPLIED_STATUSES.has(c.status) || c.sold))
-          || db.messages.some(m => m.contactId === id && m.direction === 'in' && m.createdAt >= firstSent.get(id));
+        return c && (REPLIED_STATUSES.has(c.status) || c.sold);
       }).length;
       const sales = db.contacts.filter(c => c.sold && c.soldBy === u.id && inMonth(c.soldAt, month)).length;
       return {
