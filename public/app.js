@@ -186,7 +186,7 @@ function ceoView() {
     <section class="kpis">
       ${kpi('Total vendido', brl(team.salesTotal), periodText(), true)}
       ${kpi('Parte Barbosa Dev', brl(commissions.bdShare), 'vendido menos comissões')}
-      ${kpi('Comissões a pagar', brl(commissions.total), `vendedores ${brl(commissions.vendedores)} · gerente ${brl(commissions.gerente)}`)}
+      ${kpi('Despesas', brl(commissions.total + (state.wa?.stats?.totalCost || 0)), `comissões ${brl(commissions.total)} (vendedores ${brl(commissions.vendedores)} · gerente ${brl(commissions.gerente)}) + WhatsApp ${brl(state.wa?.stats?.totalCost || 0)}`)}
       ${kpi('Vendas fechadas', team.salesCount, periodText())}
       ${kpi('Reuniões', team.meetings, periodText())}
       ${kpi('Mensagens enviadas', team.messaged, periodText())}

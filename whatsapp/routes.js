@@ -258,8 +258,9 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
     const templates = db.messages.filter(m => m.direction === 'out' && m.type === 'template' && inMonth(m.createdAt, month));
     const sellers = db.users.filter(u => u.active && db.waNumbers.some(n => n.userId === u.id));
 
-    // Cobrança: template entregue (ou lido) e marcado como cobrável. Respostas na janela não entram.
-    const charged = m => ['delivered', 'read'].includes(m.status) && m.pricing?.billable !== false;
+    // Custo estimado: conta assim que a Meta aceita o template (não espera a confirmação de entrega).
+    // Sai da conta se falhar ou se a Meta disser que aquela mensagem não é cobrada.
+    const charged = m => m.status !== 'failed' && m.pricing?.billable !== false;
     const costOf = list => round2(list.filter(charged).reduce((s, m) => s + (costs[(m.pricing?.category || m.templateCategory || 'MARKETING').toUpperCase()] || 0), 0));
 
     const perUser = sellers.map(u => {

@@ -22,6 +22,9 @@ async function waLoad() {
 
 async function waReload() { await waLoad(); render(); }
 
+// Atualiza só os dados do WhatsApp (e o que depende deles, como as despesas), sem recarregar a página.
+const waRefreshButton = () => `<button type="button" class="btn sm" data-wa-refresh title="Buscar os números mais recentes do WhatsApp">↻ Atualizar</button>`;
+
 // ---------- Vendedor/gerente: primeira mensagem em quantidade ----------
 function waFirstMessageCard() {
   const cfg = state.wa?.config;
@@ -34,7 +37,7 @@ function waFirstMessageCard() {
     : cfg.queuePaused ? (cfg.pauseReason || 'Envios pausados pelo CEO.')
     : !cfg.inWindow ? `Fora do horário de envio (${days}, ${cfg.sendHours.start}h às ${cfg.sendHours.end}h): o que você disparar sai no próximo horário.` : '';
   return `<section class="card" id="wa-first">
-    <div class="section-head"><h2>Enviar primeira mensagem pelo WhatsApp</h2><span class="sub">Número ${esc(cfg.myNumber.displayPhone || cfg.myNumber.phoneNumberId)}</span></div>
+    <div class="section-head"><h2>Enviar primeira mensagem pelo WhatsApp</h2><span class="sub">Número ${esc(cfg.myNumber.displayPhone || cfg.myNumber.phoneNumberId)} ${waRefreshButton()}</span></div>
     ${warn ? `<p class="sub wa-warn">${esc(warn)}</p>` : ''}
     <div class="kpis inner">
       ${kpi('Enviadas hoje', `${q.sentToday} / ${q.dailyCap}`, 'teto do dia')}
@@ -76,7 +79,7 @@ function waStatsCard(s) {
   const pct = (a, b) => b ? `${Math.round(a / b * 100)}%` : '—';
   const users = s.perUser;
   return `<section class="card">
-    <div class="section-head"><h2>WhatsApp — resultados</h2><span class="sub">${periodText()}</span></div>
+    <div class="section-head"><h2>WhatsApp — resultados</h2><span class="sub">${periodText()} ${waRefreshButton()}</span></div>
     <div class="kpis inner">
       ${kpi('Templates enviados', sum('sent'), `${sum('delivered')} entregues · ${sum('failed')} falhas`)}
       ${kpi('Taxa de resposta', pct(replied, reached), `${replied} de ${reached} contatados`)}
@@ -93,7 +96,7 @@ function waStatsCard(s) {
       <tbody>${s.perDay.slice(0, 31).map(d => `<tr><td>${fmtDate(d.date + 'T12:00:00Z')}</td>${users.map(p => `<td class="num">${d.byUser[p.userId] || 0}</td>`).join('')}
         <td class="num"><b>${Object.values(d.byUser).reduce((a, b) => a + b, 0)}</b></td></tr>`).join('')}</tbody>
     </table></div>` : ''}
-    <p class="sub">Custo = templates entregues × valor por categoria (configurável). Respostas dentro da janela de 24h aberta pelo cliente não são cobradas.</p>
+    <p class="sub">Custo estimado = templates enviados (sem os que falharam) × valor por categoria, configurável. É uma estimativa: o valor oficial está na fatura da Meta.</p>
   </section>`;
 }
 
@@ -103,7 +106,7 @@ function waQueueCard(q, templates, numbers, isCeo) {
   const heldTotal = q.numbers.reduce((t, n) => t + n.held, 0);
   const status = !q.configured ? ['', 'servidor sem WA_TOKEN'] : q.paused ? ['red', 'pausada'] : q.inWindow ? ['green', 'enviando'] : ['yellow', 'fora do horário de envio'];
   return `<section class="card">
-    <div class="section-head"><h2>Fila de disparo</h2><span class="badge ${status[0]}">${status[1]}</span></div>
+    <div class="section-head"><h2>Fila de disparo</h2><span><span class="badge ${status[0]}">${status[1]}</span> ${waRefreshButton()}</span></div>
     ${q.pauseReason ? `<p class="sub wa-warn">${esc(q.pauseReason)}</p>` : ''}
     <div class="list">${q.numbers.map(n => `<div class="list-item"><span><span class="name">${esc(userName(n.userId))}</span>
       <span class="sub">· enviadas hoje ${n.sentToday} de ${n.dailyCap}${n.held ? ` · aguardando disparo ${n.held}` : ''}${n.pending ? ` · saindo ${n.pending}` : ''}${n.failed ? ` · ${n.failed} falha(s)` : ''}</span></span>
@@ -227,9 +230,16 @@ function waSettingsCard(s) {
 
 // ---------- Eventos (delegados: os cards são redesenhados a cada render) ----------
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-wa-quality], [data-wa-retry], [data-wa-release], [data-wa-del-dispatch], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
+  const el = e.target.closest('[data-wa-refresh], [data-wa-quality], [data-wa-retry], [data-wa-release], [data-wa-del-dispatch], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
   if (!el) return;
   try {
+    if (el.matches('[data-wa-refresh]')) {
+      el.disabled = true;
+      // Envios mudam contatos de lista e as despesas: atualiza o painel de dados, não a página.
+      await refresh();
+      toast('WhatsApp atualizado');
+      return;
+    }
     if (el.dataset.waQuality) {
       el.disabled = true;
       const n = await api(`/wa/numbers/${el.dataset.waQuality}/quality`, { method: 'POST' });

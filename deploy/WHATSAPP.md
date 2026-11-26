@@ -114,9 +114,10 @@ Com a Meta (envio de verdade):
 6. Responda "SAIR" do celular e veja o contato ir para Opt-out.
 
 ## Custos (cartão "WhatsApp — resultados")
-- **Custo estimado:** templates **entregues** × valor da categoria, editável em Configurações. Referência para o Brasil: marketing ≈ R$ 0,3217 e utilidade ≈ R$ 0,035.
+- **Custo estimado:** templates **enviados** × valor da categoria, editável em Configurações. Conta assim que a Meta aceita a mensagem; se ela falhar, sai da conta. Referência para o Brasil: marketing ≈ R$ 0,3217 e utilidade ≈ R$ 0,035.
 - A categoria vem da própria Meta, no status de entrega. Se ela não vier, vale a do template cadastrado.
-- Respostas dentro da janela aberta pelo cliente não entram no cálculo.
+- O CEO vê no topo do painel as **Despesas** do período: comissões + custo estimado do WhatsApp.
+- O botão **↻ Atualizar** nos cards do WhatsApp busca os números mais novos sem recarregar a página.
 - Confira os valores atuais em developers.facebook.com/docs/whatsapp/pricing e atualize no painel quando mudarem.
 
 ## LGPD
