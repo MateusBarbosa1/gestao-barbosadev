@@ -18,7 +18,7 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
   // "A prospectar", nunca receberam template, não estão na fila e não têm bloqueio (opt-out, fixo, sem opt-in…).
   function candidates(db, number) {
     const templated = new Set(db.messages.filter(m => m.direction === 'out' && m.type === 'template').map(m => m.contactId));
-    const queued = new Set(db.dispatchItems.filter(i => ['pending', 'sending'].includes(i.status)).map(i => i.contactId));
+    const queued = new Set(db.dispatchItems.filter(i => ['held', 'pending', 'sending'].includes(i.status)).map(i => i.contactId));
     return db.contacts
       .filter(c => c.assignedTo === number.userId && c.status === 'novo' && !c.unavailable && !templated.has(c.id) && !queued.has(c.id))
       .filter(c => !queue.blockReason(db, c, number))
@@ -165,13 +165,12 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
     let added = 0;
     for (const number of numbers) {
       const ids = candidates(db, number).slice(0, limit).map(c => c.id);
-      added += queue.enqueue(db, { contactIds: ids, templateId: template.id, dispatchId: dispatch.id }).added;
+      added += queue.enqueue(db, { contactIds: ids, templateId: template.id, dispatchId: dispatch.id, held: true }).added;
     }
     if (!added) return res.status(400).json({ error: 'Nenhum contato disponível: todos de "A prospectar" já receberam mensagem, estão na fila ou estão bloqueados (opt-out, fixo, sem opt-in).' });
     dispatch.added = added;
     db.dispatches.push(dispatch);
     save();
-    queue.tick();
     res.json(dispatch);
   });
 
@@ -184,7 +183,14 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
       numbers: queue.summary(db),
       failed: db.dispatchItems.filter(i => i.status === 'failed').slice(-50).reverse()
         .map(i => ({ id: i.id, contactId: i.contactId, name: name(i.contactId), userId: i.userId, error: i.lastError, at: i.updatedAt })),
-      dispatches: db.dispatches.slice(-10).reverse(),
+      // Últimos disparos com quantos ainda esperam na fila, para poder tirar um específico.
+      dispatches: db.dispatches.slice(-10).reverse().map(d => {
+        const items = db.dispatchItems.filter(i => i.dispatchId === d.id);
+        const count = st => items.filter(i => i.status === st).length;
+        const template = db.waTemplates.find(t => t.id === d.templateId);
+        return { ...d, templateName: template?.name || '(template apagado)', held: count('held'), pending: count('pending'),
+          sent: items.filter(i => i.status === 'sent').length, cancelled: items.filter(i => i.skipReason === 'cancelado').length };
+      }),
     });
   });
   r.post('/queue/retry', lead, (req, res) => {
@@ -194,12 +200,35 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
     queue.tick();
     res.json({ retried: n });
   });
-  r.post('/queue/cancel', auth(), (req, res) => {
+  // Filtro comum de "Disparar" e "Tirar da fila": sem filtro vale para tudo; com dispatchId só aquele
+  // disparo; com userId só a fila daquele vendedor. O vendedor só mexe na própria fila.
+  function queueFilter(req, res) {
     const db = getDb();
     const owner = req.user.role === 'vendedor' ? req.user.id : req.body?.userId;
+    const dispatchId = req.body?.dispatchId || null;
+    if (dispatchId && !db.dispatches.some(d => d.id === dispatchId)) { res.status(404).json({ error: 'Disparo não encontrado.' }); return null; }
+    return i => (!owner || i.userId === owner) && (!dispatchId || i.dispatchId === dispatchId);
+  }
+  // Botão "Disparar mensagens": o que estava aguardando começa a sair (intervalo, teto e horário valem).
+  r.post('/queue/release', auth(), (req, res) => {
+    const db = getDb();
+    const match = queueFilter(req, res);
+    if (!match) return;
     let n = 0;
     for (const i of db.dispatchItems) {
-      if (i.status === 'pending' && (!owner || i.userId === owner)) { Object.assign(i, { status: 'skipped', skipReason: 'cancelado', updatedAt: new Date().toISOString() }); n++; }
+      if (i.status === 'held' && match(i)) { Object.assign(i, { status: 'pending', updatedAt: new Date().toISOString() }); n++; }
+    }
+    save();
+    queue.tick();
+    res.json({ released: n });
+  });
+  r.post('/queue/cancel', auth(), (req, res) => {
+    const db = getDb();
+    const match = queueFilter(req, res);
+    if (!match) return;
+    let n = 0;
+    for (const i of db.dispatchItems) {
+      if (['held', 'pending'].includes(i.status) && match(i)) { Object.assign(i, { status: 'skipped', skipReason: 'cancelado', updatedAt: new Date().toISOString() }); n++; }
     }
     save();
     res.json({ cancelled: n });

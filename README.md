@@ -56,7 +56,7 @@ Números já cadastrados são ignorados (o mesmo número escrito com ou sem +55,
 
 ## WhatsApp (Cloud API oficial)
 
-Cada vendedor escolhe quantas pessoas quer abordar e o painel envia a **primeira mensagem** (template aprovado) para os próximos contatos de "A prospectar", numa fila com intervalo aleatório e teto diário por número.
+Cada vendedor escolhe quantas pessoas quer abordar e o painel envia a **primeira mensagem** (template aprovado) para os próximos contatos de "A prospectar", numa fila com intervalo aleatório e teto diário por número. Os contatos entram na fila aguardando e só começam a sair quando alguém clica em **Disparar mensagens**.
 - A conversa continua no WhatsApp da equipe, e as listas são movidas à mão.
 - O webhook só registra quem respondeu e quem pediu para sair (opt-out).
 - A gestão acompanha envios, respostas, conversão, custo e a qualidade dos números.

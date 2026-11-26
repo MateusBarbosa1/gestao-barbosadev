@@ -53,7 +53,8 @@ function createQueue({ getDb, save, uid, conversationFor, phoneType, log }) {
   }
 
   // Coloca contatos na fila. Devolve quantos entraram e o motivo de cada um que ficou de fora.
-  function enqueue(db, { contactIds, templateId, dispatchId = null, priority = false }) {
+  // held: entram como "aguardando disparo" e só começam a sair quando alguém aperta "Disparar mensagens".
+  function enqueue(db, { contactIds, templateId, dispatchId = null, priority = false, held = false }) {
     const added = [];
     const skipped = [];
     const now = new Date().toISOString();
@@ -61,11 +62,11 @@ function createQueue({ getDb, save, uid, conversationFor, phoneType, log }) {
       const contact = db.contacts.find(c => c.id === id);
       const number = contact && numberFor(db, contact);
       const reason = blockReason(db, contact, number)
-        || (db.dispatchItems.some(i => i.contactId === id && ['pending', 'sending'].includes(i.status)) ? 'já está na fila' : null);
+        || (db.dispatchItems.some(i => i.contactId === id && ['held', 'pending', 'sending'].includes(i.status)) ? 'já está na fila' : null);
       if (reason) { skipped.push({ contactId: id, name: contact?.name, reason }); continue; }
       const item = {
         id: uid(), dispatchId, templateId, contactId: id, phoneNumberId: number.phoneNumberId, userId: number.userId,
-        status: 'pending', priority, attempts: 0, lastError: null, skipReason: null, notBefore: null,
+        status: held ? 'held' : 'pending', priority, attempts: 0, lastError: null, skipReason: null, notBefore: null,
         messageId: null, createdAt: now, updatedAt: now,
       };
       db.dispatchItems.push(item);
@@ -192,7 +193,7 @@ function createQueue({ getDb, save, uid, conversationFor, phoneType, log }) {
       const count = st => items.filter(i => i.status === st).length;
       return {
         phoneNumberId: n.phoneNumberId, userId: n.userId, dailyCap: n.dailyCap, sentToday: sentToday(db, n.phoneNumberId),
-        pending: count('pending') + count('sending'), failed: count('failed'), skipped: count('skipped'),
+        held: count('held'), pending: count('pending') + count('sending'), failed: count('failed'), skipped: count('skipped'),
         nextAt: nextAt.get(n.phoneNumberId) || null,
       };
     });

@@ -25,7 +25,8 @@
 //                  MARKETING|UTILITY, params ['contact.name', …], active }
 // dispatches       disparos (campanhas): { id, templateId, createdBy, createdAt, status }
 // dispatchItems    fila: { id, dispatchId, contactId, phoneNumberId, userId,
-//                  status pending|sending|sent|failed|skipped, attempts, lastError,
+//                  status held (aguardando o botão Disparar)|pending|sending|sent|failed|skipped,
+//                  attempts, lastError,
 //                  skipReason, notBefore, messageId, updatedAt }
 // waEvents         ids de eventos de status já processados (idempotência), com data,
 //                  para limpar os antigos

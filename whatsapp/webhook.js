@@ -122,7 +122,7 @@ function createWebhook({ getDb, save, uid }) {
       contact.status = 'opt_out';
       contact.followUp = false;
       for (const item of db.dispatchItems) {
-        if (item.contactId === contact.id && item.status === 'pending') Object.assign(item, { status: 'skipped', skipReason: 'opt_out', updatedAt: at });
+        if (item.contactId === contact.id && ['held', 'pending'].includes(item.status)) Object.assign(item, { status: 'skipped', skipReason: 'opt_out', updatedAt: at });
       }
       log(`opt-out registrado ${mask(msg.from)}`);
     }

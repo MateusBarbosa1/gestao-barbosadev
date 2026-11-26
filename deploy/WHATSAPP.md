@@ -19,10 +19,11 @@ fila envia um **template aprovado** para os próximos contatos de "A prospectar"
 | Telas | `public/whatsapp.js` | Cartão "Enviar primeira mensagem" do vendedor/gerente e cartões de gestão do CEO/gerente |
 
 ### No dia a dia
-1. O vendedor abre o painel, vai em **Enviar primeira mensagem pelo WhatsApp**, escolhe o template e quantas pessoas, e clica em **Enviar**.
-2. A fila manda uma mensagem a cada intervalo, sem passar do teto do dia. Cada contato que recebe vai sozinho para **Mensagem enviada**.
-3. Quem responde aparece no WhatsApp do vendedor. Ele conversa por lá e move o contato de lista no painel.
-4. O cartão mostra quantas mensagens já saíram hoje, quantas estão na fila e quantos contatos ainda estão disponíveis. Dá para cancelar o que ainda está na fila.
+1. O vendedor abre o painel, vai em **Enviar primeira mensagem pelo WhatsApp**, escolhe o template e quantas pessoas, e clica em **Colocar na fila**. Nada sai ainda: os contatos ficam **aguardando disparo**.
+2. Quando quiser começar, clica em **Disparar mensagens**. O gerente também pode disparar pelo card **Fila de disparo** (um disparo, um vendedor ou tudo).
+3. A fila manda uma mensagem a cada intervalo, sem passar do teto do dia. Cada contato que recebe vai sozinho para **Mensagem enviada**.
+4. Quem responde aparece no WhatsApp do vendedor. Ele conversa por lá e move o contato de lista no painel.
+5. O cartão mostra quantas mensagens já saíram hoje, quantas aguardam disparo, quantas estão saindo e quantos contatos ainda estão disponíveis. **Tirar da fila** desfaz o que ainda não saiu (por disparo, por vendedor ou tudo), e esses contatos voltam a ficar disponíveis.
 
 ### Regras
 - **Fila:** cada número envia um template, espera um intervalo aleatório (padrão 20–90 s) e envia o próximo.

@@ -27,18 +27,19 @@ function waFirstMessageCard() {
   const cfg = state.wa?.config;
   if (!cfg?.myNumber) return '';
   const q = cfg.myQueue;
-  const leftToday = Math.max(0, q.dailyCap - q.sentToday - q.pending);
+  const leftToday = Math.max(0, q.dailyCap - q.sentToday - q.pending - q.held);
   const suggestion = Math.max(1, Math.min(q.available, leftToday || q.dailyCap));
   const days = cfg.sendDays.map(d => WA_DAYS[d]).join(', ');
   const warn = !cfg.configured ? 'O WhatsApp ainda não foi configurado no servidor.'
     : cfg.queuePaused ? (cfg.pauseReason || 'Envios pausados pelo CEO.')
-    : !cfg.inWindow ? `Fora do horário de envio (${days}, ${cfg.sendHours.start}h às ${cfg.sendHours.end}h): o que você colocar na fila sai no próximo horário.` : '';
+    : !cfg.inWindow ? `Fora do horário de envio (${days}, ${cfg.sendHours.start}h às ${cfg.sendHours.end}h): o que você disparar sai no próximo horário.` : '';
   return `<section class="card" id="wa-first">
     <div class="section-head"><h2>Enviar primeira mensagem pelo WhatsApp</h2><span class="sub">Número ${esc(cfg.myNumber.displayPhone || cfg.myNumber.phoneNumberId)}</span></div>
     ${warn ? `<p class="sub wa-warn">${esc(warn)}</p>` : ''}
     <div class="kpis inner">
       ${kpi('Enviadas hoje', `${q.sentToday} / ${q.dailyCap}`, 'teto do dia')}
-      ${kpi('Na fila', q.pending, q.pending ? 'saindo aos poucos' : 'nada esperando')}
+      ${kpi('Aguardando disparo', q.held, q.held ? 'aperte "Disparar mensagens"' : 'nada esperando')}
+      ${kpi('Saindo', q.pending, q.pending ? 'um de cada vez' : 'nada saindo')}
       ${kpi('Disponíveis', q.available, 'em "A prospectar", nunca receberam')}
       ${q.failed ? kpi('Falharam', q.failed, 'o gerente pode reenviar') : ''}
     </div>
@@ -46,11 +47,14 @@ function waFirstMessageCard() {
       <input type="hidden" name="userId" value="${state.user.id}">
       <label>Mensagem (template)<select name="templateId" required>${cfg.templates.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('') || '<option value="">Nenhum template cadastrado</option>'}</select></label>
       <label>Quantas pessoas<input name="limit" type="number" min="1" max="${Math.max(1, q.available)}" value="${suggestion}" required></label>
-      <button class="btn primary" ${cfg.templates.length && q.available ? '' : 'disabled'}>Enviar</button>
+      <button class="btn" ${cfg.templates.length && q.available ? '' : 'disabled'}>Colocar na fila</button>
     </form>
-    <p class="sub">Vai para os próximos contatos de "A prospectar", um a cada ${cfg.minDelaySec}–${cfg.maxDelaySec} s. O que passar do teto de hoje sai no próximo dia de envio.
+    <p class="sub">"Colocar na fila" separa os próximos contatos de "A prospectar", mas nada é enviado até você apertar <b>Disparar mensagens</b>.
+      Aí sai uma a cada ${cfg.minDelaySec}–${cfg.maxDelaySec} s; o que passar do teto de hoje sai no próximo dia de envio.
       Cada contato que recebe passa para "Mensagem enviada"; a conversa continua no WhatsApp e as listas você move aqui no painel.</p>
-    ${q.pending ? `<div class="wa-actions"><button type="button" class="btn sm danger" data-wa-cancel>Cancelar os ${q.pending} que estão na fila</button></div>` : ''}
+    ${q.held || q.pending ? `<div class="wa-actions">
+      ${q.held ? `<button type="button" class="btn primary" data-wa-release data-label="${q.held} mensagem(ns)">Disparar mensagens (${q.held})</button>` : ''}
+      <button type="button" class="btn sm danger" data-wa-cancel data-label="os ${q.held + q.pending} envios que estão na fila">Tirar da fila</button></div>` : ''}
   </section>`;
 }
 
@@ -96,15 +100,24 @@ function waStatsCard(s) {
 function waQueueCard(q, templates, numbers, isCeo) {
   const active = templates.filter(t => t.active);
   const owners = numbers.filter(n => n.active);
+  const heldTotal = q.numbers.reduce((t, n) => t + n.held, 0);
   const status = !q.configured ? ['', 'servidor sem WA_TOKEN'] : q.paused ? ['red', 'pausada'] : q.inWindow ? ['green', 'enviando'] : ['yellow', 'fora do horário de envio'];
   return `<section class="card">
     <div class="section-head"><h2>Fila de disparo</h2><span class="badge ${status[0]}">${status[1]}</span></div>
     ${q.pauseReason ? `<p class="sub wa-warn">${esc(q.pauseReason)}</p>` : ''}
     <div class="list">${q.numbers.map(n => `<div class="list-item"><span><span class="name">${esc(userName(n.userId))}</span>
-      <span class="sub">· hoje ${n.sentToday}/${n.dailyCap} · na fila ${n.pending}${n.failed ? ` · ${n.failed} falha(s)` : ''}</span></span>
-      ${goalMeterSmall(n.sentToday, n.dailyCap)}</div>`).join('') || '<p class="empty">Cadastre um número para começar.</p>'}</div>
+      <span class="sub">· hoje ${n.sentToday}/${n.dailyCap}${n.held ? ` · aguardando disparo ${n.held}` : ''} · saindo ${n.pending}${n.failed ? ` · ${n.failed} falha(s)` : ''}</span></span>
+      <span class="row-actions">${goalMeterSmall(n.sentToday, n.dailyCap)}
+      ${n.held ? `<button type="button" class="btn sm primary" data-wa-release data-user="${n.userId}" data-label="${n.held} mensagem(ns) de ${esc(userName(n.userId))}">Disparar</button>` : ''}
+      ${n.held + n.pending ? `<button type="button" class="btn sm danger" data-wa-cancel data-user="${n.userId}" data-label="os ${n.held + n.pending} envios na fila de ${esc(userName(n.userId))}">Tirar da fila</button>` : ''}</span></div>`).join('') || '<p class="empty">Cadastre um número para começar.</p>'}</div>
+    ${q.dispatches.length ? `<h3 class="mini">Disparos recentes</h3><div class="list">${q.dispatches.map(d => `
+      <div class="list-item"><span><span class="name">${esc(d.templateName)}</span>
+        <span class="sub">· ${d.userId === 'all' ? 'todos os números' : esc(userName(d.userId))} · ${fmtDateTime(d.createdAt)} · ${d.added} contato(s): ${d.sent} enviado(s)${d.held ? `, ${d.held} aguardando disparo` : ''}${d.pending ? `, ${d.pending} saindo` : ''}${d.cancelled ? `, ${d.cancelled} tirado(s)` : ''}</span></span>
+        <span class="row-actions">${d.held ? `<button type="button" class="btn sm primary" data-wa-release data-dispatch="${d.id}" data-label="${d.held} mensagem(ns) desse disparo">Disparar mensagens</button>` : ''}
+        ${d.held + d.pending ? `<button type="button" class="btn sm danger" data-wa-cancel data-dispatch="${d.id}" data-label="os ${d.held + d.pending} envios que ainda estão na fila desse disparo">Tirar da fila</button>` : ''}</span></div>`).join('')}</div>` : ''}
     <form class="wa-form" data-wa-form="dispatch">
       <h3 class="mini">Novo disparo (contatos "A prospectar" que ainda não receberam template)</h3>
+      <p class="sub">Fica aguardando na fila até alguém apertar "Disparar mensagens".</p>
       <div class="form-row">
         <label>Template<select name="templateId" required>${active.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('') || '<option value="">Cadastre um template</option>'}</select></label>
         <label>De quem<select name="userId"><option value="all">Todos os números</option>${owners.map(n => `<option value="${n.userId}">${esc(userName(n.userId))}</option>`).join('')}</select></label>
@@ -113,9 +126,10 @@ function waQueueCard(q, templates, numbers, isCeo) {
       <button class="btn primary" ${active.length && owners.length ? '' : 'disabled'}>Colocar na fila</button>
     </form>
     <div class="wa-actions">
+      ${heldTotal ? `<button type="button" class="btn sm primary" data-wa-release data-label="todas as ${heldTotal} mensagens aguardando">Disparar tudo (${heldTotal})</button>` : ''}
       ${isCeo ? `<button type="button" class="btn sm" data-wa-pause="${q.paused ? 'false' : 'true'}">${q.paused ? 'Retomar fila' : 'Pausar fila'}</button>` : ''}
       <button type="button" class="btn sm" data-wa-retry ${q.failed.length ? '' : 'disabled'}>Reenviar falhas (${q.failed.length})</button>
-      <button type="button" class="btn sm danger" data-wa-cancel>Cancelar pendentes</button>
+      <button type="button" class="btn sm danger" data-wa-cancel data-label="todos os envios que ainda estão na fila">Tirar tudo da fila</button>
     </div>
     ${q.failed.length ? `<h3 class="mini">Últimas falhas</h3><div class="list">${q.failed.slice(0, 8).map(f => `
       <div class="list-item"><span><span class="name">${esc(f.name)}</span> <span class="sub">· ${esc(userName(f.userId))} · ${fmtDateTime(f.at)}</span>
@@ -212,7 +226,7 @@ function waSettingsCard(s) {
 
 // ---------- Eventos (delegados: os cards são redesenhados a cada render) ----------
 document.addEventListener('click', async e => {
-  const el = e.target.closest('[data-wa-quality], [data-wa-retry], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
+  const el = e.target.closest('[data-wa-quality], [data-wa-retry], [data-wa-release], [data-wa-cancel], [data-wa-pause], [data-wa-cap], [data-wa-num-active], [data-wa-tpl-active]');
   if (!el) return;
   try {
     if (el.dataset.waQuality) {
@@ -226,10 +240,20 @@ document.addEventListener('click', async e => {
       toast(`${r.retried} envio(s) voltaram para a fila`);
       return waReload();
     }
+    if (el.matches('[data-wa-release]')) {
+      const { dispatch, user, label } = el.dataset;
+      if (!confirm(`Disparar ${label}? Elas começam a sair agora, uma de cada vez, respeitando o intervalo, o teto do dia e o horário de envio.`)) return;
+      el.disabled = true;
+      const r = await api('/wa/queue/release', { method: 'POST', body: { dispatchId: dispatch, userId: user } });
+      toast(`${r.released} mensagem(ns) disparada(s)`);
+      return refresh();
+    }
     if (el.matches('[data-wa-cancel]')) {
-      if (!confirm('Cancelar todos os envios que ainda estão na fila?')) return;
-      const r = await api('/wa/queue/cancel', { method: 'POST', body: {} });
-      toast(`${r.cancelled} envio(s) cancelados`);
+      const { dispatch, user, label } = el.dataset;
+      if (!confirm(`Tirar da fila ${label || 'todos os envios que ainda estão na fila'}? Os contatos voltam a ficar disponíveis para um novo disparo.`)) return;
+      el.disabled = true;
+      const r = await api('/wa/queue/cancel', { method: 'POST', body: { dispatchId: dispatch, userId: user } });
+      toast(`${r.cancelled} envio(s) tirados da fila`);
       return waReload();
     }
     if (el.dataset.waPause) {
@@ -268,8 +292,7 @@ document.addEventListener('submit', async e => {
   try {
     if (kind === 'first' || kind === 'dispatch') {
       const r = await api('/wa/dispatches', { method: 'POST', body: { templateId: f.get('templateId'), userId: f.get('userId') || undefined, limit: Number(f.get('limit')) } });
-      toast(`${r.added} pessoa(s) na fila de envio`);
-      // A fila muda as listas conforme envia: atualiza o painel inteiro.
+      toast(`${r.added} pessoa(s) na fila, aguardando "Disparar mensagens"`);
       await refresh();
       return;
     } else if (kind === 'number') {
