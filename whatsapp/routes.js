@@ -268,7 +268,13 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
       const reached = [...new Set(mine.map(m => m.contactId))];
       const firstSent = new Map();
       for (const m of mine) if (!firstSent.has(m.contactId)) firstSent.set(m.contactId, m.createdAt);
-      const replied = reached.filter(id => db.messages.some(m => m.contactId === id && m.direction === 'in' && m.createdAt >= firstSent.get(id))).length;
+      // Respondeu: a resposta chegou pelo webhook OU a equipe moveu o contato para "Respondidos" ou além
+      // (a conversa acontece no app do WhatsApp, então a lista do contato também vale).
+      const replied = reached.filter(id => {
+        const c = db.contacts.find(x => x.id === id);
+        return (c && (REPLIED_STATUSES.has(c.status) || c.sold))
+          || db.messages.some(m => m.contactId === id && m.direction === 'in' && m.createdAt >= firstSent.get(id));
+      }).length;
       const sales = db.contacts.filter(c => c.sold && c.soldBy === u.id && inMonth(c.soldAt, month)).length;
       return {
         userId: u.id, name: u.name, sent: mine.length,
@@ -295,6 +301,9 @@ function createRoutes({ getDb, save, uid, auth, queue }) {
 
   return r;
 }
+
+// Listas que só existem depois de o contato responder.
+const REPLIED_STATUSES = new Set(['respondidos', 'interessou_exemplo', 'respondeu_exemplo', 'interessou_site', 'reuniao', 'cliente']);
 
 const PARAM_OPTIONS = ['contact.name', 'contact.niche', 'contact.city', 'seller.name'];
 
